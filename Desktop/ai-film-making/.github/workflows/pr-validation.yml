@@ -1,0 +1,74 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check file structure
+      run: |
+        echo "Validating project structure..."
+        
+        # Check required directories exist
+        directories=("01-preproduction" "02-production" "03-postproduction" "assets" "assets/audio" "assets/images" "assets/video")
+        for dir in "${directories[@]}"; do
+          if [ ! -d "$dir" ]; then
+            echo "❌ Missing required directory: $dir"
+            exit 1
+          else
+            echo "✅ Found directory: $dir"
+          fi
+        done
+        
+        # Check required files exist
+        files=("README.md" "CONTRIBUTING.md" "AI-FILMMAKING-GUIDE.md" "QUICK-START-GUIDE.md")
+        for file in "${files[@]}"; do
+          if [ ! -f "$file" ]; then
+            echo "❌ Missing required file: $file"
+            exit 1
+          else
+            echo "✅ Found file: $file"
+          fi
+        done
+        
+        echo "🎉 All structural requirements met!"
+        
+    - name: Validate Markdown files
+      run: |
+        echo "Checking Markdown files for basic syntax..."
+        
+        # Find all .md files and check they're not empty
+        md_files=$(find . -name "*.md" -type f)
+        
+        for file in $md_files; do
+          if [ ! -s "$file" ]; then
+            echo "⚠️  Warning: $file is empty"
+          else
+            echo "✅ $file has content"
+          fi
+        done
+        
+    - name: Check for sensitive data
+      run: |
+        echo "Scanning for potential sensitive information..."
+        
+        # Check for common sensitive patterns
+        if grep -r -i -E "(password|secret|token|key|api_key)" . --exclude-dir=.git --exclude="*.yml" --exclude="*.yaml" --exclude="CONTRIBUTING.md"; then
+          echo "⚠️  Warning: Potential sensitive information found. Please review."
+        else
+          echo "✅ No obvious sensitive information detected"
+        fi
+        
+    - name: Summary
+      run: |
+        echo "🎬 PR validation completed successfully!"
+        echo "Ready for review and merge to main branch."
