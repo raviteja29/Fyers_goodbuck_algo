@@ -31,10 +31,32 @@ ai-film-making/
 
 ## Getting Started
 
-1. Review the script and storyboard in `01-preproduction/`
-2. Follow the production workflow in `02-production/`
-3. Complete post-production using files in `03-postproduction/`
+1. **Clone the Repository**
+   ```bash
+   git clone <your-repository-url>
+   cd ai-film-making
+   ```
+
+2. **Follow the Production Pipeline**
+   - Review the script and storyboard in `01-preproduction/`
+   - Follow the production workflow in `02-production/`
+   - Complete post-production using files in `03-postproduction/`
+
+3. **Contributing**
+   - See [CONTRIBUTING.md](CONTRIBUTING.md) for Git workflow and PR guidelines
+   - All changes must be made via Pull Requests to the `main` branch
+   - Follow the established project structure and naming conventions
 
 ## Sample Project
 
 This repository includes a complete sample short film demonstrating each tool in the pipeline.
+
+## Development Workflow
+
+This project uses a **main branch workflow**:
+- The `main` branch is protected and serves as the primary integration branch
+- All feature development happens in feature branches
+- Changes are merged to `main` only through reviewed Pull Requests
+- Automated validation ensures code quality and project structure
+
+For detailed contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
