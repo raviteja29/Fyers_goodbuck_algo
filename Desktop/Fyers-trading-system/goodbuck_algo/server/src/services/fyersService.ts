@@ -13,14 +13,45 @@ class FyersService {
 
   constructor() {
     this.config = {
-      appId: process.env.FYERS_APP_ID || '',
-      secretKey: process.env.FYERS_SECRET_KEY || '',
+      appId: process.env.FYERS_APP_ID || process.env.FYERS_CLIENT_ID || '',
+      secretKey: process.env.FYERS_APP_SECRET || process.env.FYERS_SECRET_KEY || process.env.FYERS_CLIENT_SECRET || '',
       redirectUri: process.env.FYERS_REDIRECT_URI || ''
     };
+    
+    // Debug logging and validation
+    console.log('Fyers Service Configuration:', {
+      appId: this.config.appId ? `${this.config.appId.substring(0, 5)}...` : 'MISSING',
+      secretKey: this.config.secretKey ? 'SET' : 'MISSING',
+      redirectUri: this.config.redirectUri || 'MISSING',
+      envVars: {
+        FYERS_APP_ID: process.env.FYERS_APP_ID ? 'SET' : 'MISSING',
+        FYERS_SECRET_KEY: process.env.FYERS_SECRET_KEY ? 'SET' : 'MISSING',
+        FYERS_REDIRECT_URI: process.env.FYERS_REDIRECT_URI ? 'SET' : 'MISSING'
+      }
+    });
+
+    // Validate required configuration
+    if (!this.config.appId) {
+      throw new Error('FYERS_APP_ID is required but not set in environment variables');
+    }
+    if (!this.config.secretKey) {
+      throw new Error('FYERS_SECRET_KEY is required but not set in environment variables');
+    }
+    if (!this.config.redirectUri) {
+      throw new Error('FYERS_REDIRECT_URI is required but not set in environment variables');
+    }
   }
 
   // Generate authentication URL
   getAuthUrl(): string {
+    // Validate configuration before generating URL
+    if (!this.config.appId) {
+      throw new Error('App ID is not configured. Please check FYERS_APP_ID environment variable.');
+    }
+    if (!this.config.redirectUri) {
+      throw new Error('Redirect URI is not configured. Please check FYERS_REDIRECT_URI environment variable.');
+    }
+
     const authUrl = `https://api-t1.fyers.in/api/v3/generate-authcode`;
     const params = new URLSearchParams({
       client_id: this.config.appId,
@@ -28,7 +59,16 @@ class FyersService {
       response_type: 'code',
       state: 'sample_state'
     });
-    return `${authUrl}?${params.toString()}`;
+    
+    const fullAuthUrl = `${authUrl}?${params.toString()}`;
+    console.log('Generated Fyers Auth URL:', {
+      baseUrl: authUrl,
+      clientId: this.config.appId,
+      redirectUri: this.config.redirectUri,
+      fullUrl: fullAuthUrl
+    });
+    
+    return fullAuthUrl;
   }
 
   // Exchange auth code for access token

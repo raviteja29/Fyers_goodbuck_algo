@@ -1,20 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiService } from '../services/api';
+import type { OptionChartResponse } from '../types/market';
 
 export interface LiveDataConfig {
   enabled: boolean;
   rangeFrom: string;
   rangeTo: string;
   refreshInterval?: number; // in milliseconds
+  resolution?: string; // timeframe like '1','5','15','60','240','D'
 }
 
 export interface LiveData {
   niftyRange: { high: number; low: number } | null;
   strikes: { pe: number; ce: number } | null;
-  peData: any[] | null;
-  ceData: any[] | null;
+  peData: CandlePoint[] | null;
+  ceData: CandlePoint[] | null;
   loading: boolean;
   error: string | null;
+}
+
+interface CandlePoint {
+  time: string; // localized string
+  open: number; high: number; low: number; close: number; idx: number;
 }
 
 export const useLiveData = (config: LiveDataConfig) => {
@@ -46,32 +53,31 @@ export const useLiveData = (config: LiveDataConfig) => {
       }));
 
       // Fetch PE option data
-      const peChartData = await apiService.getOptionChart(
+      const resolution = config.resolution || '60';
+      const peChartData: OptionChartResponse = await apiService.getOptionChart(
         strikeData.peSymbol,
-        '60',
+        resolution,
         config.rangeFrom,
         config.rangeTo
       );
 
       // Fetch CE option data
-      const ceChartData = await apiService.getOptionChart(
+      const ceChartData: OptionChartResponse = await apiService.getOptionChart(
         strikeData.ceSymbol,
-        '60',
+        resolution,
         config.rangeFrom,
         config.rangeTo
       );
 
       // Transform candle data to component format
-      const transformData = (candles: number[][]) => {
-        return candles.map((candle, idx) => ({
-          time: new Date(candle[0] * 1000).toLocaleString(),
-          open: candle[1],
-          high: candle[2],
-          low: candle[3],
-          close: candle[4],
-          idx
-        }));
-      };
+      const transformData = (candles: number[][]): CandlePoint[] => candles.map((candle, idx) => ({
+        time: new Date(candle[0] * 1000).toLocaleString(),
+        open: candle[1],
+        high: candle[2],
+        low: candle[3],
+        close: candle[4],
+        idx
+      }));
 
       setData(prev => ({
         ...prev,
@@ -87,7 +93,7 @@ export const useLiveData = (config: LiveDataConfig) => {
         error: error.message
       }));
     }
-  }, [config.enabled, config.rangeFrom, config.rangeTo]);
+  }, [config.enabled, config.rangeFrom, config.rangeTo, config.resolution]);
 
   useEffect(() => {
     fetchData();

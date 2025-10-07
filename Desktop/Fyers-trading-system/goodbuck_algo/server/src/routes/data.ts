@@ -1,21 +1,13 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { fyersService } from '../services/fyersService.js';
-import { getCurrentAccessToken } from './auth.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 
 export const fyersDataRouter = express.Router();
 
-// Middleware to check authentication
-const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const token = getCurrentAccessToken();
-  if (!token) {
-    return res.status(401).json({ error: 'Not authenticated. Please login first.' });
-  }
-  fyersService.setAccessToken(token);
-  next();
-};
+// Authentication handled by shared middleware
 
 // Get NIFTY index data for a date range
-fyersDataRouter.get('/nifty-range', requireAuth, async (req, res) => {
+fyersDataRouter.get('/nifty-range', requireAuth, async (req: Request, res: Response) => {
   try {
     const { rangeFrom, rangeTo } = req.query;
 
@@ -53,7 +45,7 @@ fyersDataRouter.get('/nifty-range', requireAuth, async (req, res) => {
 });
 
 // Get option chart data
-fyersDataRouter.get('/option-chart', requireAuth, async (req, res) => {
+fyersDataRouter.get('/option-chart', requireAuth, async (req: Request, res: Response) => {
   try {
     const { symbol, resolution, rangeFrom, rangeTo } = req.query;
 
@@ -78,7 +70,7 @@ fyersDataRouter.get('/option-chart', requireAuth, async (req, res) => {
 });
 
 // Get option chain
-fyersDataRouter.get('/option-chain', requireAuth, async (req, res) => {
+fyersDataRouter.get('/option-chain', requireAuth, async (req: Request, res: Response) => {
   try {
     const { symbol, strikecount, timestamp } = req.query;
 
@@ -98,7 +90,7 @@ fyersDataRouter.get('/option-chain', requireAuth, async (req, res) => {
 });
 
 // Get current quotes
-fyersDataRouter.get('/quotes', requireAuth, async (req, res) => {
+fyersDataRouter.get('/quotes', requireAuth, async (req: Request, res: Response) => {
   try {
     const { symbols } = req.query;
 
@@ -115,7 +107,7 @@ fyersDataRouter.get('/quotes', requireAuth, async (req, res) => {
 });
 
 // Calculate strikes based on previous week range
-fyersDataRouter.get('/calculate-strikes', requireAuth, async (req, res) => {
+fyersDataRouter.get('/calculate-strikes', requireAuth, async (req: Request, res: Response) => {
   try {
     const { rangeFrom, rangeTo } = req.query;
 
@@ -160,9 +152,16 @@ fyersDataRouter.get('/calculate-strikes', requireAuth, async (req, res) => {
   }
 });
 
-// Helper function to get expiry code (simplified - you'd calculate based on actual expiry)
-function getExpiryCode(): string {
-  // This is a placeholder - implement actual expiry calculation
-  // Format: O for Oct, 07 for date
-  return 'O07';
+// Helper: Determine next weekly expiry (Thursday) for current or next week and return code like O09 (Oct 9)
+function getExpiryCode(date: Date = new Date()): string {
+  const monthCodes = ['F','G','H','J','K','M','N','Q','U','V','X','Z']; // Futures style; adjust if exchange uses different
+  // Find next Thursday >= today
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const weekday = d.getUTCDay(); // 0=Sun ... 4=Thu
+  let add = (4 - weekday); // days until Thursday
+  if (add < 0) add += 7; // move to next week
+  d.setUTCDate(d.getUTCDate() + add);
+  const monthCode = monthCodes[d.getUTCMonth()];
+  const day = String(d.getUTCDate()).padStart(2,'0');
+  return monthCode + day;
 }

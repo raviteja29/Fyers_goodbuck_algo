@@ -1,12 +1,15 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
+
+import type { OptionChartResponse, OptionChainResponse, QuotesResponse, UserProfile } from '../types/market';
 
 export interface AuthStatus {
   authenticated: boolean;
-  profile?: any;
+  profile?: UserProfile;
   error?: string;
-}
+} 
 
 export interface NiftyRange {
+  success: boolean;
   high: number;
   low: number;
   rawData?: any;
@@ -20,44 +23,64 @@ export interface CalculatedStrikes {
 }
 
 class ApiService {
+  private async request<T>(path: string, options: RequestInit & { query?: Record<string, any> } = {}): Promise<T> {
+    const { query, ...init } = options;
+    let url = `${API_BASE_URL}${path}`;
+    if (query) {
+      const qs = new URLSearchParams();
+      Object.entries(query).forEach(([k, v]) => {
+        if (v === undefined || v === null) return;
+        qs.append(k, String(v));
+      });
+      const qsString = qs.toString();
+      if (qsString) url += (url.includes('?') ? '&' : '?') + qsString;
+    }
+    try {
+      const res = await fetch(url, {
+        credentials: 'include',
+        ...init
+      });
+      const contentType = res.headers.get('content-type');
+      let body: any = null;
+      if (contentType && contentType.includes('application/json')) {
+        try { body = await res.json(); } catch { body = null; }
+      } else {
+        body = await res.text();
+      }
+      if (!res.ok) {
+        const message = body?.error || body?.message || `Request failed (${res.status})`;
+        throw new Error(message);
+      }
+      return body as T;
+    } catch (err: any) {
+      // Re-throw with normalized message
+      throw new Error(err?.message || 'Network request failed');
+    }
+  }
+
   // Get auth URL
   async getAuthUrl(): Promise<string> {
-    const response = await fetch(`${API_BASE_URL}/auth/url`);
-    const data = await response.json();
+    const data = await this.request<{ authUrl: string }>(`/auth/url`);
     return data.authUrl;
   }
 
   // Check authentication status
   async checkAuthStatus(): Promise<AuthStatus> {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/status`, {
-        credentials: 'include'
-      });
-      return await response.json();
+      return await this.request<AuthStatus>(`/auth/status`);
     } catch (error) {
-      return { authenticated: false, error: 'Failed to check auth status' };
+      return { authenticated: false, error: (error as Error).message };
     }
   }
 
   // Logout
   async logout(): Promise<void> {
-    await fetch(`${API_BASE_URL}/auth/logout`, {
-      method: 'POST',
-      credentials: 'include'
-    });
+    await this.request(`/auth/logout`, { method: 'POST' });
   }
 
   // Get NIFTY range for dates
   async getNiftyRange(rangeFrom: string, rangeTo: string): Promise<NiftyRange> {
-    const response = await fetch(
-      `${API_BASE_URL}/data/nifty-range?rangeFrom=${rangeFrom}&rangeTo=${rangeTo}`,
-      { credentials: 'include' }
-    );
-    if (!response.ok) {
-      throw new Error('Failed to fetch NIFTY range');
-    }
-    const data = await response.json();
-    return data;
+    return this.request<NiftyRange>(`/data/nifty-range`, { query: { rangeFrom, rangeTo } });
   }
 
   // Get option chart data
@@ -66,52 +89,23 @@ class ApiService {
     resolution: string,
     rangeFrom: string,
     rangeTo: string
-  ): Promise<any> {
-    const response = await fetch(
-      `${API_BASE_URL}/data/option-chart?symbol=${symbol}&resolution=${resolution}&rangeFrom=${rangeFrom}&rangeTo=${rangeTo}`,
-      { credentials: 'include' }
-    );
-    if (!response.ok) {
-      throw new Error('Failed to fetch option chart');
-    }
-    return await response.json();
+  ): Promise<OptionChartResponse> {
+    return this.request<OptionChartResponse>(`/data/option-chart`, { query: { symbol, resolution, rangeFrom, rangeTo } });
   }
 
   // Calculate strikes based on previous week
   async calculateStrikes(rangeFrom: string, rangeTo: string): Promise<CalculatedStrikes> {
-    const response = await fetch(
-      `${API_BASE_URL}/data/calculate-strikes?rangeFrom=${rangeFrom}&rangeTo=${rangeTo}`,
-      { credentials: 'include' }
-    );
-    if (!response.ok) {
-      throw new Error('Failed to calculate strikes');
-    }
-    return await response.json();
+    return this.request<CalculatedStrikes>(`/data/calculate-strikes`, { query: { rangeFrom, rangeTo } });
   }
 
   // Get option chain
-  async getOptionChain(symbol: string, strikecount?: number): Promise<any> {
-    let url = `${API_BASE_URL}/data/option-chain?symbol=${symbol}`;
-    if (strikecount) {
-      url += `&strikecount=${strikecount}`;
-    }
-    const response = await fetch(url, { credentials: 'include' });
-    if (!response.ok) {
-      throw new Error('Failed to fetch option chain');
-    }
-    return await response.json();
+  async getOptionChain(symbol: string, strikecount?: number): Promise<OptionChainResponse> {
+    return this.request<OptionChainResponse>(`/data/option-chain`, { query: { symbol, strikecount } });
   }
 
   // Get quotes
-  async getQuotes(symbols: string[]): Promise<any> {
-    const response = await fetch(
-      `${API_BASE_URL}/data/quotes?symbols=${symbols.join(',')}`,
-      { credentials: 'include' }
-    );
-    if (!response.ok) {
-      throw new Error('Failed to fetch quotes');
-    }
-    return await response.json();
+  async getQuotes(symbols: string[]): Promise<QuotesResponse> {
+    return this.request<QuotesResponse>(`/data/quotes`, { query: { symbols: symbols.join(',') } });
   }
 }
 

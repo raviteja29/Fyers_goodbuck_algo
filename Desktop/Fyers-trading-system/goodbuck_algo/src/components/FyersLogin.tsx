@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { apiService } from '../services/api';
+import { apiService, AuthStatus } from '../services/api';
+import type { UserProfile } from '../types/market';
 import { LogIn, LogOut, User, CheckCircle } from 'lucide-react';
 
 interface FyersLoginProps {
@@ -9,7 +10,7 @@ interface FyersLoginProps {
 export const FyersLogin: React.FC<FyersLoginProps> = ({ onAuthChange }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,9 +35,9 @@ export const FyersLogin: React.FC<FyersLoginProps> = ({ onAuthChange }) => {
   const checkAuthStatus = async () => {
     setLoading(true);
     try {
-      const status = await apiService.checkAuthStatus();
+  const status: AuthStatus = await apiService.checkAuthStatus();
       setIsAuthenticated(status.authenticated);
-      setProfile(status.profile);
+  setProfile(status.profile ?? null);
       onAuthChange(status.authenticated);
       if (!status.authenticated && status.error) {
         setError(status.error);

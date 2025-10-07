@@ -1,13 +1,11 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { fyersService } from '../services/fyersService.js';
+import { tokenStore } from '../services/tokenStore.js';
 
 export const fyersAuthRouter = express.Router();
 
-// In-memory session storage (use Redis in production)
-let currentAccessToken: string | null = null;
-
 // Get authentication URL
-fyersAuthRouter.get('/url', (req, res) => {
+fyersAuthRouter.get('/url', (req: Request, res: Response) => {
   try {
     const authUrl = fyersService.getAuthUrl();
     res.json({ authUrl });
@@ -17,7 +15,7 @@ fyersAuthRouter.get('/url', (req, res) => {
 });
 
 // Handle callback from Fyers
-fyersAuthRouter.get('/callback', async (req, res) => {
+fyersAuthRouter.get('/callback', async (req: Request, res: Response) => {
   try {
     const { auth_code, state } = req.query;
 
@@ -25,8 +23,11 @@ fyersAuthRouter.get('/callback', async (req, res) => {
       return res.status(400).json({ error: 'Authorization code not received' });
     }
 
-    const accessToken = await fyersService.getAccessToken(auth_code as string);
-    currentAccessToken = accessToken;
+  const accessToken = await fyersService.getAccessToken(auth_code as string);
+
+  // Store token both in session and tokenStore (session ID acts as user key)
+  req.session.accessToken = accessToken;
+  tokenStore.set(req.sessionID, accessToken);
 
     // Redirect to frontend with success
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -39,7 +40,7 @@ fyersAuthRouter.get('/callback', async (req, res) => {
 });
 
 // Exchange auth code for token (alternative method)
-fyersAuthRouter.post('/token', async (req, res) => {
+fyersAuthRouter.post('/token', async (req: Request, res: Response) => {
   try {
     const { authCode } = req.body;
 
@@ -47,13 +48,14 @@ fyersAuthRouter.post('/token', async (req, res) => {
       return res.status(400).json({ error: 'Authorization code required' });
     }
 
-    const accessToken = await fyersService.getAccessToken(authCode);
-    currentAccessToken = accessToken;
+  const accessToken = await fyersService.getAccessToken(authCode);
+
+  req.session.accessToken = accessToken;
+  tokenStore.set(req.sessionID, accessToken);
 
     res.json({ 
       success: true, 
-      message: 'Authentication successful',
-      accessToken 
+      message: 'Authentication successful'
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -61,13 +63,16 @@ fyersAuthRouter.post('/token', async (req, res) => {
 });
 
 // Check authentication status
-fyersAuthRouter.get('/status', async (req, res) => {
+fyersAuthRouter.get('/status', async (req: Request, res: Response) => {
   try {
-    if (!currentAccessToken) {
+  // Prefer tokenStore (multi-user); fallback to session
+  const accessToken = tokenStore.get(req.sessionID) || req.session.accessToken;
+    
+    if (!accessToken) {
       return res.json({ authenticated: false });
     }
 
-    fyersService.setAccessToken(currentAccessToken);
+    fyersService.setAccessToken(accessToken);
     const profile = await fyersService.getProfile();
 
     res.json({ 
@@ -75,19 +80,29 @@ fyersAuthRouter.get('/status', async (req, res) => {
       profile: profile.data 
     });
   } catch (error: any) {
-    currentAccessToken = null;
+    // Token might be expired
+  req.session.accessToken = undefined;
+  tokenStore.delete(req.sessionID);
     res.json({ authenticated: false, error: error.message });
   }
 });
 
 // Logout
-fyersAuthRouter.post('/logout', async (req, res) => {
+fyersAuthRouter.post('/logout', async (req: Request, res: Response) => {
   try {
-    if (currentAccessToken) {
-      fyersService.setAccessToken(currentAccessToken);
-      await fyersService.logout();
-      currentAccessToken = null;
+  const accessToken = tokenStore.get(req.sessionID) || req.session.accessToken;
+    
+    if (accessToken) {
+  fyersService.setAccessToken(accessToken);
+  await fyersService.logout();
     }
+    
+    // Destroy session
+  req.session.destroy((err: any) => {
+      if (err) {
+        console.error('Session destroy error:', err);
+      }
+    });
 
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (error: any) {
@@ -95,7 +110,7 @@ fyersAuthRouter.post('/logout', async (req, res) => {
   }
 });
 
-// Get current access token
-export function getCurrentAccessToken(): string | null {
-  return currentAccessToken;
+// Middleware to get current access token from session
+export function getAccessTokenFromSession(req: express.Request): string | null {
+  return tokenStore.get(req.sessionID) || req.session.accessToken || null;
 }

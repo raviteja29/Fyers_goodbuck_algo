@@ -1,4 +1,4 @@
-# NIFTY Fibonacci Options Strategy Tracker
+# Goodbuck Algo – NIFTY Fibonacci Options Strategy Tracker
 
 A React-based web application for tracking and analyzing NIFTY options strategies using Fibonacci retracement levels and Hull Moving Average (HMA 50).
 
@@ -25,7 +25,7 @@ The strategy identifies weekly option strikes based on the previous week's NIFTY
 ## Project Structure
 
 ```
-nifty-fibonacci-strategy/
+goodbuck_algo/
 ├── src/
 │   ├── components/
 │   │   └── NiftyFibStrategy.tsx  # Main strategy component
@@ -46,7 +46,7 @@ nifty-fibonacci-strategy/
 1. **Clone the repository**:
 ```bash
 git clone <your-repo-url>
-cd nifty-fibonacci-strategy
+cd goodbuck_algo
 ```
 
 2. **Install dependencies**:
@@ -62,6 +62,23 @@ npm run dev
 4. **Open in browser**:
 ```
 http://localhost:5173
+```
+
+## Environment
+
+Create a `.env` in the project root (frontend) from `.env.example`:
+
+```
+VITE_API_URL=http://localhost:3001/api
+```
+
+Backend `.env` (in `server/`):
+
+```
+FYERS_APP_ID=YOUR_ID
+FYERS_APP_SECRET=YOUR_SECRET
+FYERS_REDIRECT_URI=http://localhost:3001/api/auth/callback
+PORT=3001
 ```
 
 ## Build for Production
