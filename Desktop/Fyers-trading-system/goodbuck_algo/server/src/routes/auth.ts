@@ -17,21 +17,35 @@ fyersAuthRouter.get('/url', (req: Request, res: Response) => {
 // Handle callback from Fyers
 fyersAuthRouter.get('/callback', async (req: Request, res: Response) => {
   try {
-    const { auth_code, state } = req.query;
+    console.log('OAuth callback received raw query:', req.query);
+    const { auth_code, code, state } = req.query as any;
 
-    if (!auth_code) {
-      return res.status(400).json({ error: 'Authorization code not received' });
+    // Fyers should return auth_code; log if only code is present (just in case of API variation)
+    const effectiveCode = auth_code || code;
+
+    if (!effectiveCode) {
+      return res.status(400).json({ error: 'Authorization code (auth_code) not received' });
     }
 
-  const accessToken = await fyersService.getAccessToken(auth_code as string);
+    const accessToken = await fyersService.getAccessToken(String(effectiveCode));
 
-  // Store token both in session and tokenStore (session ID acts as user key)
-  req.session.accessToken = accessToken;
-  tokenStore.set(req.sessionID, accessToken);
+    // Store token both in session and tokenStore (session ID acts as user key)
+    req.session.accessToken = accessToken;
+    tokenStore.set(req.sessionID, accessToken);
 
-    // Redirect to frontend with success
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}?auth=success`);
+    // Force save the session before redirect to ensure Set-Cookie is flushed
+    console.log('About to save session (pre-redirect)', { sessionID: req.sessionID, hasAccessToken: !!req.session.accessToken });
+    req.session.save(err => {
+      if (err) {
+        console.error('Session save error:', err);
+      }
+      console.log('Auth callback success', {
+        sessionID: req.sessionID,
+        hasAccess: !!req.session.accessToken
+      });
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      res.redirect(`${frontendUrl}?auth=success&sid=${encodeURIComponent(req.sessionID.substring(0,8))}`);
+    });
   } catch (error: any) {
     console.error('Callback error:', error);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -67,6 +81,12 @@ fyersAuthRouter.get('/status', async (req: Request, res: Response) => {
   try {
   // Prefer tokenStore (multi-user); fallback to session
   const accessToken = tokenStore.get(req.sessionID) || req.session.accessToken;
+    console.log('STATUS request', {
+      sessionID: req.sessionID.substring(0,8),
+      hasSession: !!req.session.accessToken,
+      hasStore: !!tokenStore.get(req.sessionID),
+      cookieHeader: req.headers.cookie
+    });
     
     if (!accessToken) {
       return res.json({ authenticated: false });
@@ -85,6 +105,34 @@ fyersAuthRouter.get('/status', async (req: Request, res: Response) => {
   tokenStore.delete(req.sessionID);
     res.json({ authenticated: false, error: error.message });
   }
+});
+
+// Quick ping to check auth without profile fetch
+fyersAuthRouter.get('/ping', (req: Request, res: Response) => {
+  const accessToken = tokenStore.get(req.sessionID) || req.session.accessToken;
+  console.log('PING request', {
+    sessionID: req.sessionID.substring(0,8),
+    hasSession: !!req.session.accessToken,
+    hasStore: !!tokenStore.get(req.sessionID)
+  });
+  res.json({ 
+    authenticated: !!accessToken,
+    sessionID: req.sessionID.substring(0, 8),
+    hasSessionToken: !!req.session.accessToken,
+    hasStoreToken: !!tokenStore.get(req.sessionID)
+  });
+});
+
+// Debug: view raw session / headers (DO NOT enable in production)
+fyersAuthRouter.get('/debug/session', (req: Request, res: Response) => {
+  res.json({
+    sessionID: req.sessionID,
+    hasSessionAccessToken: !!req.session.accessToken,
+    tokenStoreHas: !!tokenStore.get(req.sessionID),
+    cookieHeader: req.headers['cookie'],
+    cookiesParsed: (req as any).cookies,
+    sessionKeys: Object.keys(req.session || {})
+  });
 });
 
 // Logout

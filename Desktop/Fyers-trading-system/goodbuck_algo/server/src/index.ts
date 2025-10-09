@@ -36,12 +36,38 @@ async function startServer() {
   const PORT = process.env.PORT || 3001;
 
   // Middleware
+  const rawOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean) || [];
+  const fallbackOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const allowedSet = new Set<string>([fallbackOrigin, ...rawOrigins]);
+  // Normalize: if one form of localhost is present, consider adding the other for transition
+  const hasLocalhost = Array.from(allowedSet).some(o => o.includes('://localhost:'));
+  const has127 = Array.from(allowedSet).some(o => o.includes('://127.0.0.1:'));
+  if (hasLocalhost && !has127) {
+    for (const o of Array.from(allowedSet)) {
+      if (o.includes('://localhost:')) {
+        allowedSet.add(o.replace('://localhost', '://127.0.0.1'));
+      }
+    }
+  } else if (has127 && !hasLocalhost) {
+    for (const o of Array.from(allowedSet)) {
+      if (o.includes('://127.0.0.1:')) {
+        allowedSet.add(o.replace('://127.0.0.1', '://localhost'));
+      }
+    }
+  }
+  const allowedOrigins = Array.from(allowedSet);
   app.use(cors({
-    origin: process.env.ALLOWED_ORIGINS?.split(',') || process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // allow non-browser requests
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      console.warn('CORS blocked origin:', origin, 'Allowed:', allowedOrigins);
+      callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
     methods: ['GET','POST','PUT','DELETE','OPTIONS'],
     allowedHeaders: ['Content-Type','Authorization']
   }));
+  console.log('CORS allowed origins:', allowedOrigins);
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
   // Basic rate limiting (adjust per needs)
   const limiter = rateLimit({
@@ -60,17 +86,38 @@ async function startServer() {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === 'production',
+      secure: false, // localhost over http; set true only behind HTTPS
       httpOnly: true,
+      sameSite: 'lax',
+      // domain removed: letting browser set host-only cookie avoids mismatch between localhost and 127.0.0.1
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
   }));
 
+  // Auth request diagnostic logger (after session so sessionID is available)
+  app.use('/api/auth', (req, _res, next) => {
+    const sid = (req as any).sessionID ? String((req as any).sessionID).substring(0, 8) : 'no-session';
+    console.log('[AUTH-TRACE]', req.method, req.path, {
+      sid,
+      cookieHeader: req.headers.cookie,
+      hasSessionAccessToken: !!(req as any).session?.accessToken
+    });
+    next();
+  });
+
   // Routes - import after environment is loaded
-  const authModule = await import('./routes/auth.js');
-  const dataModule = await import('./routes/data.js');
-  fyersAuthRouter = authModule.fyersAuthRouter;
-  fyersDataRouter = dataModule.fyersDataRouter;
+  try {
+    console.log('Loading auth routes...');
+    const authModule = await import('./routes/auth.js');
+    console.log('Loading data routes...');
+    const dataModule = await import('./routes/data.js');
+    fyersAuthRouter = authModule.fyersAuthRouter;
+    fyersDataRouter = dataModule.fyersDataRouter;
+    console.log('Routes loaded successfully');
+  } catch (error) {
+    console.error('Failed to load routes:', error);
+    process.exit(1);
+  }
 
   app.use('/api/auth', fyersAuthRouter);
   app.use('/api/data', fyersDataRouter);
@@ -88,11 +135,41 @@ async function startServer() {
     });
   });
 
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  const portNum = Number(PORT);
+  console.log(`About to bind to port ${portNum} on 0.0.0.0...`);
+  
+  const server = app.listen(portNum, (error?: Error) => {
+    if (error) {
+      console.error('Listen error:', error);
+      return;
+    }
+    console.log(`🚀 Server running on http://localhost:${portNum}`);
+    console.log(`🌐 Also accessible via http://127.0.0.1:${portNum}`);
     console.log(`📊 Frontend URL: ${process.env.FRONTEND_URL}`);
+    
+    // Test if we can actually reach ourselves
+    setTimeout(() => {
+      console.log('Testing server connectivity...');
+      fetch(`http://localhost:${portNum}/health`)
+        .then(r => console.log('Self-test SUCCESS:', r.status))
+        .catch(e => console.log('Self-test FAILED:', e.message));
+    }, 1000);
+  });
+
+  server.on('error', (error: any) => {
+    console.error('Server error:', error);
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Port ${portNum} is already in use`);
+    }
+  });
+
+  server.on('listening', () => {
+    console.log('Server listening event fired');
   });
 }
 
 // Start the server
-startServer().catch(console.error);
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});

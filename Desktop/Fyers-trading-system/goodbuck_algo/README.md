@@ -120,5 +120,30 @@ Feel free to submit issues and enhancement requests!
 MIT License
 
 ## Disclaimer
+## Dev Server Host Troubleshooting
+
+If the frontend loads at `http://localhost:5173` but fails with `http://127.0.0.1:5173` (ERR_CONNECTION_REFUSED):
+
+1. Vite may have been binding only to the IPv6 loopback (`::1`) that resolves for `localhost` on your machine.
+2. The config now sets `server.host = true` in `vite.config.ts`, which binds on all interfaces (0.0.0.0 and ::).
+3. Make sure you restarted the dev server after pulling the change.
+4. Verify binding (Windows PowerShell):
+   ```powershell
+   netstat -ano | findstr 5173
+   ```
+   You should see a LISTENING line for 0.0.0.0:5173 (or 127.0.0.1:5173).
+5. You can also run with an explicit flag:
+   ```powershell
+   npm run dev -- --host
+   ```
+6. If a port conflict occurs (another process using 5173) Vite will not auto-increment now because `strictPort: true`; fix by stopping the other process or changing the port in `vite.config.ts` and your backend `FRONTEND_URL`.
+
+Environment coordination example (backend `.env`):
+```
+FRONTEND_URL=http://localhost:5173
+ALLOWED_ORIGINS=http://localhost:5173
+```
+
+Stay consistent using either `localhost` *or* `127.0.0.1` for auth redirects and frontend access to avoid host-only cookie mismatches.
 
 This application is for educational and research purposes only. Options trading involves substantial risk. Always consult with a qualified financial advisor before making investment decisions.

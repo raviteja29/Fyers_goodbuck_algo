@@ -1,72 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine, CartesianGrid } from 'recharts';
-import { TrendingUp, TrendingDown, Clock, GitCompare } from 'lucide-react';
-import { apiService } from '../services/api';
-import type { OptionChartResponse } from '../types/market';
-import { FyersLogin } from './FyersLogin';
+import { TrendingUp, TrendingDown, Clock, GitCompare, RefreshCw } from 'lucide-react';
+import { useLiveData } from '../hooks/useLiveData';
 
-interface CandleData {
-  time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  idx: number;
-  hma: number | null;
-}
-
-interface FibLevels {
-  [key: string]: number;
-}
-
-interface CandlestickChartProps {
-  data: CandleData[];
-  fibLevels: FibLevels;
-  title: string;
-}
-
-const CandlestickChart = ({ data, fibLevels, title }: CandlestickChartProps) => {
-  // Handle empty data to prevent NaN values
-  if (!data || data.length === 0) {
-    return (
-      <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-        <h3 className="text-lg font-semibold mb-4">{title}</h3>
-        <div className="flex items-center justify-center h-96 text-slate-400">
-          <div className="text-center">
-            <Clock className="w-8 h-8 mx-auto mb-2" />
-            <p>No data available. Please authenticate with Fyers to load historical data.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Filter out invalid data points
-  const validData = data.filter(d => 
-    d && 
-    typeof d.low === 'number' && 
-    typeof d.high === 'number' && 
-    !isNaN(d.low) && 
-    !isNaN(d.high) &&
-    !isNaN(d.open) &&
-    !isNaN(d.close)
-  );
-
-  if (validData.length === 0) {
-    return (
-      <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-        <h3 className="text-lg font-semibold mb-4">{title}</h3>
-        <div className="flex items-center justify-center h-96 text-slate-400">
-          <div className="text-center">
-            <p>Invalid data format. Please check your data source.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const yMin = Math.min(...validData.map(d => d.low)) - 20;
-  const yMax = Math.max(...validData.map(d => d.high)) + 20;
+const CandlestickChart = ({ data, fibLevels, title }: any) => {
+  const yMin = Math.min(...data.map((d: any) => d.low)) - 20;
+  const yMax = Math.max(...data.map((d: any) => d.high)) + 20;
   const yRange = yMax - yMin;
   
   return (
@@ -74,28 +13,24 @@ const CandlestickChart = ({ data, fibLevels, title }: CandlestickChartProps) => 
       <h3 className="text-lg font-semibold mb-4">{title}</h3>
       <div className="relative" style={{ height: '450px' }}>
         <svg width="100%" height="100%" viewBox="0 0 1000 450" preserveAspectRatio="xMidYMid meet">
-          {Object.entries(fibLevels).map(([level, price]) => {
-            // Ensure price is a valid number
-            if (!price || isNaN(price) || yRange <= 0) return null;
+          {Object.entries(fibLevels).map(([level, price]: any) => {
             const y = 400 - ((price - yMin) / yRange) * 380;
-            // Ensure y coordinate is valid
-            if (isNaN(y)) return null;
             return (
               <g key={level}>
                 <line x1="50" y1={y} x2="950" y2={y} stroke="#475569" strokeDasharray="3,3" strokeWidth="1"/>
                 <text x="960" y={y + 5} fill="#94a3b8" fontSize="12">{price.toFixed(0)}</text>
               </g>
             );
-          }).filter(g => g !== null)}
+          })}
           
-          {validData.map((candle, i) => {
-            const x = 50 + (i / validData.length) * 900;
+          {data.map((candle: any, i: number) => {
+            const x = 50 + (i / data.length) * 900;
             const wickTop = 400 - ((candle.high - yMin) / yRange) * 380;
             const wickBottom = 400 - ((candle.low - yMin) / yRange) * 380;
             const bodyTop = 400 - ((Math.max(candle.open, candle.close) - yMin) / yRange) * 380;
             const bodyBottom = 400 - ((Math.min(candle.open, candle.close) - yMin) / yRange) * 380;
             const isGreen = candle.close >= candle.open;
-            const candleWidth = Math.max(3, 900 / validData.length - 2);
+            const candleWidth = Math.max(3, 900 / data.length - 2);
             
             return (
               <g key={i}>
@@ -112,19 +47,19 @@ const CandlestickChart = ({ data, fibLevels, title }: CandlestickChartProps) => 
             );
           })}
           
-          <polyline
-            points={validData.map((d, i) => {
-              if (d.hma === null || isNaN(d.hma)) return null;
-              const x = 50 + (i / validData.length) * 900;
-              const y = 400 - ((d.hma - yMin) / yRange) * 380;
-              // Ensure y coordinate is valid
-              if (isNaN(y)) return null;
-              return x + ',' + y;
-            }).filter(p => p !== null).join(' ')}
-            fill="none"
-            stroke="#3b82f6"
-            strokeWidth="2"
-          />
+          {candle.hma && (
+            <polyline
+              points={data.map((d: any, i: number) => {
+                if (d.hma === null) return null;
+                const x = 50 + (i / data.length) * 900;
+                const y = 400 - ((d.hma - yMin) / yRange) * 380;
+                return x + ',' + y;
+              }).filter((p: any) => p !== null).join(' ')}
+              fill="none"
+              stroke="#3b82f6"
+              strokeWidth="2"
+            />
+          )}
           
           <text x="500" y="440" fill="#94a3b8" fontSize="12" textAnchor="middle">Time</text>
           <text x="20" y="225" fill="#94a3b8" fontSize="12" textAnchor="middle" transform="rotate(-90 20 225)">Price</text>
@@ -148,24 +83,31 @@ const CandlestickChart = ({ data, fibLevels, title }: CandlestickChartProps) => 
   );
 };
 
-const NiftyFibStrategy = () => {
+interface NiftyFibStrategyProps {
+  isAuthenticated: boolean;
+}
+
+const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) => {
   const [selectedView, setSelectedView] = useState('pe_chart');
   const [timeframe, setTimeframe] = useState('60');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [pe1hrData, setPe1hrData] = useState<CandleData[]>([]);
-  const [pe15minData, setPe15minData] = useState<CandleData[]>([]);
-  const [ce1hrData, setCe1hrData] = useState<CandleData[]>([]);
-  const [ce15minData, setCe15minData] = useState<CandleData[]>([]);
+  
+  // Date range for historical data - 3 months back
+  const [dateRange] = useState({
+    from: '2025-07-01',  // 3 months of data for HMA 50
+    to: '2025-10-07'
+  });
 
-  const prevWeekRange = { high: 25149.85, low: 24587.70 };
-  const strikes = { pe: 25150, ce: 24550 };
+  // Fetch live data from Fyers API
+  const { niftyRange, strikes, peData, ceData, loading, error, refetch } = useLiveData({
+    enabled: isAuthenticated,
+    rangeFrom: dateRange.from,
+    rangeTo: dateRange.to,
+    refreshInterval: 60000  // Refresh every minute
+  });
 
-  const calculateHMA = (data: CandleData[], period = 50): (number | null)[] => {
-    const result: (number | null)[] = [];
+  const calculateHMA = (data: any[], period = 50) => {
+    const result = [];
     for (let i = 0; i < data.length; i++) {
-      // Only calculate HMA after we have enough data points (period)
       if (i < period - 1) {
         result.push(null);
       } else {
@@ -177,467 +119,210 @@ const NiftyFibStrategy = () => {
     return result;
   };
 
-  // Helper function to transform API candle data to component format
-  const transformApiData = (candles: number[][]): CandleData[] => {
-    return candles.map((candle, idx) => ({
-      time: new Date(candle[0] * 1000).toLocaleString('en-US', {
-        month: 'short',
-        day: '2-digit',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: false
-      }),
-      open: candle[1],
-      high: candle[2],
-      low: candle[3],
-      close: candle[4],
-      idx,
-      hma: null // Will be calculated separately
-    }));
-  };
+  // Process data with HMA
+  const processedPeData = useMemo(() => {
+    if (!peData) return null;
+    const hma = calculateHMA(peData, 50);
+    return peData.map((d, i) => ({ ...d, hma: hma[i] }));
+  }, [peData]);
 
-  // Fetch historical data for 3 months (200+ candles)
-  const fetchHistoricalData = async () => {
-    if (!isAuthenticated) {
-      setError('Please login to Fyers first to fetch historical data');
-      return;
-    }
+  const processedCeData = useMemo(() => {
+    if (!ceData) return null;
+    const hma = calculateHMA(ceData, 50);
+    return ceData.map((d, i) => ({ ...d, hma: hma[i] }));
+  }, [ceData]);
 
-    setLoading(true);
-    setError(null);
-    
-    try {
-      // Calculate date range for 3 months (200 candles at 1-hour resolution)
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 90); // 90 days ago
-      
-      const rangeFrom = Math.floor(startDate.getTime() / 1000).toString();
-      const rangeTo = Math.floor(endDate.getTime() / 1000).toString();
+  // Calculate Fibonacci levels
+  const peFibLevels = useMemo(() => {
+    if (!processedPeData) return {};
+    const highs = processedPeData.map(d => d.high);
+    const lows = processedPeData.map(d => d.low);
+    const high = Math.max(...highs);
+    const low = Math.min(...lows);
+    const range = high - low;
+    return {
+      '1.618': low + range * 1.618,
+      '1.0': high,
+      '0.618': low + range * 0.618,
+      '0.5': low + range * 0.5,
+      '0': low
+    };
+  }, [processedPeData]);
 
-      // Define option symbols based on strikes
-      const peSymbol = `NSE:NIFTY25OCT${strikes.pe}PE`;
-      const ceSymbol = `NSE:NIFTY25OCT${strikes.ce}CE`;
+  const ceFibLevels = useMemo(() => {
+    if (!processedCeData) return {};
+    const highs = processedCeData.map(d => d.high);
+    const lows = processedCeData.map(d => d.low);
+    const high = Math.max(...highs);
+    const low = Math.min(...lows);
+    const range = high - low;
+    return {
+      '1.618': low + range * 1.618,
+      '1.0': high,
+      '0.618': low + range * 0.618,
+      '0.5': low + range * 0.5,
+      '0': low
+    };
+  }, [processedCeData]);
 
-      // Fetch data for all timeframes and both options
-      const [pe1hrResponse, pe15minResponse, ce1hrResponse, ce15minResponse] = await Promise.all([
-        apiService.getOptionChart(peSymbol, '60', rangeFrom, rangeTo),   // PE 1-hour
-        apiService.getOptionChart(peSymbol, '15', rangeFrom, rangeTo),   // PE 15-min
-        apiService.getOptionChart(ceSymbol, '60', rangeFrom, rangeTo),   // CE 1-hour
-        apiService.getOptionChart(ceSymbol, '15', rangeFrom, rangeTo)    // CE 15-min
-      ]);
+  if (!isAuthenticated) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="bg-slate-800 p-8 rounded-lg border border-slate-700 text-center">
+          <h2 className="text-2xl font-bold mb-4">Authentication Required</h2>
+          <p className="text-slate-400">Please login to Fyers to view live option data and charts.</p>
+        </div>
+      </div>
+    );
+  }
 
-      // Transform and set data
-      if (pe1hrResponse.s === 'ok' && pe1hrResponse.candles) {
-        const data = transformApiData(pe1hrResponse.candles);
-        const hma = calculateHMA(data, 50);
-        setPe1hrData(data.map((d, i) => ({ ...d, hma: hma[i] })));
-      }
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="bg-slate-800 p-8 rounded-lg border border-slate-700 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-slate-400">Loading historical data from Fyers...</p>
+        </div>
+      </div>
+    );
+  }
 
-      if (pe15minResponse.s === 'ok' && pe15minResponse.candles) {
-        const data = transformApiData(pe15minResponse.candles);
-        const hma = calculateHMA(data, 50);
-        setPe15minData(data.map((d, i) => ({ ...d, hma: hma[i] })));
-      }
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="bg-red-900/30 p-8 rounded-lg border border-red-700 text-center">
+          <h2 className="text-2xl font-bold mb-4 text-red-400">Error Loading Data</h2>
+          <p className="text-red-300 mb-4">{error}</p>
+          <button
+            onClick={refetch}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4 inline mr-2" />
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-      if (ce1hrResponse.s === 'ok' && ce1hrResponse.candles) {
-        const data = transformApiData(ce1hrResponse.candles);
-        const hma = calculateHMA(data, 50);
-        setCe1hrData(data.map((d, i) => ({ ...d, hma: hma[i] })));
-      }
-
-      if (ce15minResponse.s === 'ok' && ce15minResponse.candles) {
-        const data = transformApiData(ce15minResponse.candles);
-        const hma = calculateHMA(data, 50);
-        setCe15minData(data.map((d, i) => ({ ...d, hma: hma[i] })));
-      }
-
-    } catch (err: any) {
-      setError(err.message);
-      console.error('Failed to fetch historical data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Fetch data on component mount
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchHistoricalData();
-    }
-  }, [isAuthenticated]);
-
-  // Handle authentication state change
-  const handleAuthChange = (authenticated: boolean) => {
-    setIsAuthenticated(authenticated);
-    if (authenticated) {
-      setError(null);
-      fetchHistoricalData();
-    } else {
-      // Clear data when logged out
-      setPe1hrData([]);
-      setPe15minData([]);
-      setCe1hrData([]);
-      setCe15minData([]);
-    }
-  };
-
-  const pePrevWeekData = pe1hrData.filter((d, i) => i < 30);
-  const peHigh = pePrevWeekData.length > 0 ? Math.max(...pePrevWeekData.map(d => d.high)) : 0;
-  const peLow = pePrevWeekData.length > 0 ? Math.min(...pePrevWeekData.map(d => d.low)) : 0;
-  const peRange = peHigh - peLow;
-  const peFibLevels = {'1.618': peLow + peRange * 1.618, '1.0': peHigh, '0.618': peLow + peRange * 0.618, '0.5': peLow + peRange * 0.5, '0': peLow};
-
-  const cePrevWeekData = ce1hrData.filter((d, i) => i < 19);
-  const ceHigh = cePrevWeekData.length > 0 ? Math.max(...cePrevWeekData.map(d => d.high)) : 0;
-  const ceLow = cePrevWeekData.length > 0 ? Math.min(...cePrevWeekData.map(d => d.low)) : 0;
-  const ceRange = ceHigh - ceLow;
-  const ceFibLevels = {'1.618': ceLow + ceRange * 1.618, '1.0': ceHigh, '0.618': ceLow + ceRange * 0.618, '0.5': ceLow + ceRange * 0.5, '0': ceLow};
-
-  const getCurrentData = (): CandleData[] => {
-    if (selectedView === 'pe_chart') return timeframe === '60' ? pe1hrData : pe15minData;
-    if (selectedView === 'ce_chart') return timeframe === '60' ? ce1hrData : ce15minData;
+  const getCurrentData = () => {
+    if (selectedView === 'pe_chart') return processedPeData;
+    if (selectedView === 'ce_chart') return processedCeData;
     return [];
   };
 
-  const getCurrentFib = (): FibLevels => {
+  const getCurrentFib = () => {
     return selectedView.includes('pe') ? peFibLevels : ceFibLevels;
   };
-
-  // Create unified data for compare chart with FULL historical data (no artificial filling)
-  const compareData = useMemo(() => {
-    if (!pe1hrData || !ce1hrData || pe1hrData.length === 0 || ce1hrData.length === 0) {
-      return [];
-    }
-
-    // Create time-based mapping with FULL historical data points
-    const timeMap = new Map<string, { time: string; peClose: number | null; ceClose: number | null }>();
-    
-    // Add all PE data points (up to 200 candles of historical data)
-    pe1hrData.forEach(point => {
-      if (point?.time && point?.close !== undefined) {
-        timeMap.set(point.time, { 
-          time: point.time, 
-          peClose: point.close, 
-          ceClose: null 
-        });
-      }
-    });
-    
-    // Add all CE data points (up to 200 candles of historical data), merging with existing PE data
-    ce1hrData.forEach(point => {
-      if (point?.time && point?.close !== undefined) {
-        if (timeMap.has(point.time)) {
-          // Merge with existing PE data
-          const existing = timeMap.get(point.time)!;
-          existing.ceClose = point.close;
-        } else {
-          // Create new entry with only CE data
-          timeMap.set(point.time, { 
-            time: point.time, 
-            peClose: null, 
-            ceClose: point.close 
-          });
-        }
-      }
-    });
-    
-    // Convert to array and sort by time - FULL HISTORICAL RANGE
-    const unified = Array.from(timeMap.values()).sort((a, b) => {
-      // Parse time strings for proper sorting
-      const timeA = new Date(a.time);
-      const timeB = new Date(b.time);
-      return timeA.getTime() - timeB.getTime();
-    });
-    
-    console.log('Compare data (full history):', {
-      pePoints: pe1hrData.length,
-      cePoints: ce1hrData.length,
-      unifiedPoints: unified.length,
-      timeRange: unified.length > 0 ? `${unified[0].time} to ${unified[unified.length - 1].time}` : 'No data',
-      firstPE: unified.find(p => p.peClose !== null)?.time,
-      firstCE: unified.find(p => p.ceClose !== null)?.time,
-      lastPE: unified.slice().reverse().find(p => p.peClose !== null)?.time,
-      lastCE: unified.slice().reverse().find(p => p.ceClose !== null)?.time
-    });
-    
-    return unified;
-  }, [pe1hrData, ce1hrData]);
 
   return (
     <div className="w-full max-w-7xl mx-auto p-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-xl shadow-2xl">
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-          NIFTY Fibonacci Options Strategy
+          NIFTY Fibonacci Options Strategy - Live Data
         </h1>
-        <p className="text-slate-400">Week: Sept 24-30 to Oct 7 Expiry | 3 Months Historical Data</p>
+        <p className="text-slate-400">Data Range: {dateRange.from} to {dateRange.to}</p>
       </div>
-
-      {/* Authentication Section */}
-      <div className="mb-6">
-        <FyersLogin onAuthChange={handleAuthChange} />
-      </div>
-
-      {/* Authentication Required Message */}
-      {!isAuthenticated && !loading && (
-        <div className="bg-slate-800 p-6 rounded-lg border border-slate-700 mb-6">
-          <div className="text-center">
-            <h3 className="text-xl font-semibold mb-3">🔐 Authentication Required</h3>
-            <p className="text-slate-400 mb-4">
-              Please login to Fyers above to access 3 months of historical option data and HMA 50 analysis.
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div className="bg-slate-700 p-3 rounded">
-                <div className="text-slate-400">PE 1H Data</div>
-                <div className="font-semibold text-yellow-400">Login Required</div>
-              </div>
-              <div className="bg-slate-700 p-3 rounded">
-                <div className="text-slate-400">CE 1H Data</div>
-                <div className="font-semibold text-yellow-400">Login Required</div>
-              </div>
-              <div className="bg-slate-700 p-3 rounded">
-                <div className="text-slate-400">PE 15M Data</div>
-                <div className="font-semibold text-yellow-400">Login Required</div>
-              </div>
-              <div className="bg-slate-700 p-3 rounded">
-                <div className="text-slate-400">CE 15M Data</div>
-                <div className="font-semibold text-yellow-400">Login Required</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading Indicator */}
-      {loading && (
-        <div className="bg-slate-800 p-6 rounded-lg border border-slate-700 mb-6">
-          <div className="flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            <span className="ml-3 text-lg">Fetching 3 months of historical data...</span>
-          </div>
-          <p className="text-center text-slate-400 mt-2">
-            Loading ~200 candles each for PE & CE options with HMA 50 calculations
-          </p>
-        </div>
-      )}
-
-      {/* Error Display */}
-      {error && (
-        <div className="bg-red-900/30 border border-red-700 p-4 rounded-lg mb-6">
-          <div className="flex items-center">
-            <span className="text-red-400 font-semibold">❌ Data Loading Error:</span>
-            <span className="ml-2 text-red-300">{error}</span>
-          </div>
-          <button
-            onClick={fetchHistoricalData}
-            className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors text-sm"
-          >
-            Retry Loading Data
-          </button>
-        </div>
-      )}
-
-      {/* Data Status */}
-      {!loading && !error && isAuthenticated && (
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <div className="text-slate-400">PE 1H Data</div>
-              <div className="font-semibold text-green-400">{pe1hrData.length} candles</div>
-            </div>
-            <div>
-              <div className="text-slate-400">CE 1H Data</div>
-              <div className="font-semibold text-green-400">{ce1hrData.length} candles</div>
-            </div>
-            <div>
-              <div className="text-slate-400">PE 15M Data</div>
-              <div className="font-semibold text-green-400">{pe15minData.length} candles</div>
-            </div>
-            <div>
-              <div className="text-slate-400">CE 15M Data</div>
-              <div className="font-semibold text-green-400">{ce15minData.length} candles</div>
-            </div>
-          </div>
-          <div className="mt-2 text-xs text-slate-500">
-            HMA 50 values shown only after 50+ data points | Compare chart uses full historical timeline
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">Previous Week Range</div>
-          <div className="text-2xl font-bold text-green-400">H: {prevWeekRange.high.toFixed(2)}</div>
-          <div className="text-2xl font-bold text-red-400">L: {prevWeekRange.low.toFixed(2)}</div>
+          <div className="text-slate-400 text-sm mb-1">NIFTY Range</div>
+          {niftyRange && (
+            <>
+              <div className="text-2xl font-bold text-green-400">H: {niftyRange.high.toFixed(2)}</div>
+              <div className="text-2xl font-bold text-red-400">L: {niftyRange.low.toFixed(2)}</div>
+            </>
+          )}
         </div>
 
         <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">Selected Strikes</div>
-          <div className="flex items-center gap-2 mb-1">
-            <TrendingDown className="w-4 h-4 text-red-400" />
-            <span className="text-xl font-bold">{strikes.pe} PE</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-green-400" />
-            <span className="text-xl font-bold">{strikes.ce} CE</span>
-          </div>
+          <div className="text-slate-400 text-sm mb-1">Calculated Strikes</div>
+          {strikes && (
+            <>
+              <div className="flex items-center gap-2 mb-1">
+                <TrendingDown className="w-4 h-4 text-red-400" />
+                <span className="text-xl font-bold">{strikes.pe} PE</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-green-400" />
+                <span className="text-xl font-bold">{strikes.ce} CE</span>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">Current Status (Oct 7)</div>
-          <div className="text-lg font-bold text-blue-400 mb-1">NIFTY: 25,197.10</div>
-          <div className="text-sm text-green-400">25150 PE: ₹7.65</div>
-          <div className="text-sm text-green-400">24550 CE: ₹656.85</div>
+          <div className="text-slate-400 text-sm mb-1">Data Points</div>
+          <div className="text-lg font-bold text-blue-400">
+            PE: {processedPeData?.length || 0} candles
+          </div>
+          <div className="text-lg font-bold text-blue-400">
+            CE: {processedCeData?.length || 0} candles
+          </div>
+          <button
+            onClick={refetch}
+            className="mt-2 text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Refresh
+          </button>
         </div>
       </div>
 
       <div className="flex gap-2 mb-4 flex-wrap">
         <button
           onClick={() => setSelectedView('pe_chart')}
-          disabled={!isAuthenticated}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            !isAuthenticated 
-              ? 'bg-slate-600 text-slate-400 cursor-not-allowed' 
-              : selectedView === 'pe_chart' 
-                ? 'bg-red-600 text-white' 
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'pe_chart' ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-300'}`}
         >
-          25150 PE Chart
+          {strikes?.pe} PE Chart
         </button>
         <button
           onClick={() => setSelectedView('ce_chart')}
-          disabled={!isAuthenticated}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            !isAuthenticated 
-              ? 'bg-slate-600 text-slate-400 cursor-not-allowed' 
-              : selectedView === 'ce_chart' 
-                ? 'bg-green-600 text-white' 
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'ce_chart' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300'}`}
         >
-          24550 CE Chart
+          {strikes?.ce} CE Chart
         </button>
         <button
           onClick={() => setSelectedView('compare')}
-          disabled={!isAuthenticated}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            !isAuthenticated 
-              ? 'bg-slate-600 text-slate-400 cursor-not-allowed' 
-              : selectedView === 'compare' 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'compare' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'}`}
         >
           <GitCompare className="w-4 h-4 inline mr-2" />
           Compare
         </button>
         <button
           onClick={() => setSelectedView('pe_fib')}
-          disabled={!isAuthenticated}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            !isAuthenticated 
-              ? 'bg-slate-600 text-slate-400 cursor-not-allowed' 
-              : selectedView === 'pe_fib' 
-                ? 'bg-purple-600 text-white' 
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'pe_fib' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}
         >
           PE Fib Levels
         </button>
         <button
           onClick={() => setSelectedView('ce_fib')}
-          disabled={!isAuthenticated}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            !isAuthenticated 
-              ? 'bg-slate-600 text-slate-400 cursor-not-allowed' 
-              : selectedView === 'ce_fib' 
-                ? 'bg-purple-600 text-white' 
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          }`}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'ce_fib' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}
         >
           CE Fib Levels
         </button>
       </div>
 
-      {(selectedView === 'pe_chart' || selectedView === 'ce_chart') && (
-        <div className="mb-4 flex gap-2">
-          <button
-            onClick={() => setTimeframe('60')}
-            className={`px-3 py-1 rounded text-sm ${timeframe === '60' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-          >
-            <Clock className="w-3 h-3 inline mr-1" />
-            1 Hour
-          </button>
-          <button
-            onClick={() => setTimeframe('15')}
-            className={`px-3 py-1 rounded text-sm ${timeframe === '15' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-          >
-            <Clock className="w-3 h-3 inline mr-1" />
-            15 Min
-          </button>
-        </div>
-      )}
-
-      {(selectedView === 'pe_chart' || selectedView === 'ce_chart') && (
+      {(selectedView === 'pe_chart' || selectedView === 'ce_chart') && getCurrentData() && (
         <CandlestickChart 
           data={getCurrentData()} 
           fibLevels={getCurrentFib()} 
-          title={`${selectedView === 'pe_chart' ? '25150 PE' : '24550 CE'} - ${timeframe === '60' ? '1 Hour' : '15 Min'} with HMA 50`}
+          title={`${selectedView === 'pe_chart' ? `${strikes?.pe} PE` : `${strikes?.ce} CE`} - Live Data with HMA 50`}
         />
       )}
 
-      {selectedView === 'compare' && (
+      {selectedView === 'compare' && processedPeData && processedCeData && (
         <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-          <h3 className="text-lg font-semibold mb-4">Compare: 25150 PE vs 24550 CE (3 Months Historical Data)</h3>
+          <h3 className="text-lg font-semibold mb-4">Compare: {strikes?.pe} PE vs {strikes?.ce} CE</h3>
           <ResponsiveContainer width="100%" height={450}>
-            <LineChart data={compareData} margin={{ top: 20, right: 30, left: 20, bottom: 80 }}>
+            <LineChart>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis 
-                dataKey="time" 
-                stroke="#9ca3af"
-                tick={{ fontSize: 11 }}
-                angle={-45}
-                textAnchor="end"
-                height={80}
-                interval="preserveStartEnd"
-              />
-              <YAxis stroke="#9ca3af" />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#1f2937', 
-                  border: '1px solid #374151',
-                  borderRadius: '6px',
-                  color: '#f9fafb'
-                }}
-                labelFormatter={(value) => `Time: ${value}`}
-                formatter={(value, name) => [
-                  typeof value === 'number' ? `₹${value.toFixed(2)}` : 'No data',
-                  name === 'peClose' ? '25150 PE' : '24550 CE'
-                ]}
-              />
-              <Legend 
-                wrapperStyle={{ paddingTop: '20px' }}
-                formatter={(value) => value === 'peClose' ? '25150 PE' : '24550 CE'}
-              />
-              <Line 
-                type="monotone" 
-                dataKey="peClose" 
-                stroke="#ef4444" 
-                strokeWidth={2}
-                dot={false}
-                connectNulls={false}
-                name="peClose"
-              />
-              <Line 
-                type="monotone" 
-                dataKey="ceClose" 
-                stroke="#22c55e" 
-                strokeWidth={2}
-                dot={false}
-                connectNulls={false}
-                name="ceClose"
-              />
+              <XAxis dataKey="time" stroke="#94a3b8" angle={-45} textAnchor="end" height={80} />
+              <YAxis stroke="#94a3b8" />
+              <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
+              <Legend />
+              <Line data={processedPeData} type="monotone" dataKey="close" stroke="#ef4444" strokeWidth={2} dot={false} name={`${strikes?.pe} PE`} />
+              <Line data={processedCeData} type="monotone" dataKey="close" stroke="#22c55e" strokeWidth={2} dot={false} name={`${strikes?.ce} CE`} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -646,10 +331,10 @@ const NiftyFibStrategy = () => {
       {(selectedView === 'pe_fib' || selectedView === 'ce_fib') && (
         <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
           <h3 className="text-lg font-semibold mb-4">
-            {selectedView === 'pe_fib' ? '25150 PE' : '24550 CE'} Fibonacci Levels
+            {selectedView === 'pe_fib' ? `${strikes?.pe} PE` : `${strikes?.ce} CE`} Fibonacci Levels
           </h3>
           <div className="space-y-3">
-            {Object.entries(getCurrentFib()).reverse().map(([level, price]) => (
+            {Object.entries(getCurrentFib()).reverse().map(([level, price]: any) => (
               <div key={level} className="flex justify-between items-center p-3 bg-slate-700 rounded-lg">
                 <span className="font-medium">Fib {level}</span>
                 <span className="font-bold text-lg">₹{price.toFixed(2)}</span>
@@ -658,40 +343,6 @@ const NiftyFibStrategy = () => {
           </div>
         </div>
       )}
-
-      <div className="mt-6 bg-slate-800 p-6 rounded-lg border border-slate-700">
-        <h3 className="text-lg font-semibold mb-4">Strategy Steps</h3>
-        <div className="space-y-3">
-          <div className="flex gap-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center font-bold">1</div>
-            <div>
-              <div className="font-medium">Identify Previous Week NIFTY Range</div>
-              <div className="text-sm text-slate-400">High: 25,149.85 | Low: 24,587.70</div>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center font-bold">2</div>
-            <div>
-              <div className="font-medium">Select Option Strikes</div>
-              <div className="text-sm text-slate-400">Round HIGH up for PE (25150) | Round LOW down for CE (24550)</div>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center font-bold">3</div>
-            <div>
-              <div className="font-medium">Lay Fibonacci on Option Charts</div>
-              <div className="text-sm text-slate-400">Apply Fib levels from previous week range on option prices</div>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center font-bold">4</div>
-            <div>
-              <div className="font-medium">Monitor with HMA 50</div>
-              <div className="text-sm text-slate-400">Track price action using HMA 50 at Fib levels for entry/exit</div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

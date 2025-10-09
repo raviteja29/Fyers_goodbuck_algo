@@ -14,13 +14,14 @@ fyersDataRouter.get('/nifty-range', requireAuth, async (req: Request, res: Respo
     if (!rangeFrom || !rangeTo) {
       return res.status(400).json({ error: 'rangeFrom and rangeTo are required' });
     }
-
+    // Convert to epoch seconds if needed (Fyers expects epoch when date_format=0)
+    const { fromEpoch, toEpoch } = normalizeDateRange(rangeFrom as string, rangeTo as string);
     const data = await fyersService.getChartData({
       symbol: 'NSE:NIFTY50-INDEX',
-      resolution: '1D',
-      rangeFrom: rangeFrom as string,
-      rangeTo: rangeTo as string,
-      dateFormat: '1'
+      resolution: 'D',
+      rangeFrom: String(fromEpoch),
+      rangeTo: String(toEpoch),
+      dateFormat: '0'
     });
 
     // Calculate high and low
@@ -37,9 +38,11 @@ fyersDataRouter.get('/nifty-range', requireAuth, async (req: Request, res: Respo
         rawData: data
       });
     } else {
+      console.warn('[nifty-range] No data returned', { rangeFrom, rangeTo, status: data.s, keys: Object.keys(data || {}) });
       res.status(400).json({ error: 'No data available' });
     }
   } catch (error: any) {
+    console.error('[nifty-range] Error', { message: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -114,40 +117,47 @@ fyersDataRouter.get('/calculate-strikes', requireAuth, async (req: Request, res:
     if (!rangeFrom || !rangeTo) {
       return res.status(400).json({ error: 'rangeFrom and rangeTo are required' });
     }
+    const { fromEpoch, toEpoch } = normalizeDateRange(rangeFrom as string, rangeTo as string);
+    console.log('[calculate-strikes] Fetching NIFTY range', { rangeFrom, rangeTo, fromEpoch, toEpoch });
 
     const data = await fyersService.getChartData({
       symbol: 'NSE:NIFTY50-INDEX',
-      resolution: '1D',
-      rangeFrom: rangeFrom as string,
-      rangeTo: rangeTo as string,
-      dateFormat: '1'
+      resolution: 'D',
+      rangeFrom: String(fromEpoch),
+      rangeTo: String(toEpoch),
+      dateFormat: '0'
     });
 
     if (data.s === 'ok' && data.candles) {
       const highs = data.candles.map((c: number[]) => c[2]);
       const lows = data.candles.map((c: number[]) => c[3]);
+      if (!highs.length) {
+        console.warn('[calculate-strikes] Empty candles array', { rangeFrom, rangeTo });
+        return res.status(400).json({ error: 'No candle data in response' });
+      }
       const high = Math.max(...highs);
       const low = Math.min(...lows);
 
-      // Round high up to nearest 50 for PE
       const peStrike = Math.ceil(high / 50) * 50;
-      // Round low down to nearest 50 for CE
       const ceStrike = Math.floor(low / 50) * 50;
+      const expiry = getExpiryCode();
+      const peSymbol = `NSE:NIFTY25${expiry}${peStrike}PE`;
+      const ceSymbol = `NSE:NIFTY25${expiry}${ceStrike}CE`;
+      console.log('[calculate-strikes] Computed strikes', { high, low, peStrike, ceStrike, peSymbol, ceSymbol });
 
       res.json({
         success: true,
         weekRange: { high, low },
-        strikes: {
-          pe: peStrike,
-          ce: ceStrike
-        },
-        peSymbol: `NSE:NIFTY25${getExpiryCode()}${peStrike}PE`,
-        ceSymbol: `NSE:NIFTY25${getExpiryCode()}${ceStrike}CE`
+        strikes: { pe: peStrike, ce: ceStrike },
+        peSymbol,
+        ceSymbol
       });
     } else {
+      console.warn('[calculate-strikes] No data', { status: data.s, keys: Object.keys(data || {}), rangeFrom, rangeTo });
       res.status(400).json({ error: 'No data available' });
     }
   } catch (error: any) {
+    console.error('[calculate-strikes] Error', { message: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -164,4 +174,19 @@ function getExpiryCode(date: Date = new Date()): string {
   const monthCode = monthCodes[d.getUTCMonth()];
   const day = String(d.getUTCDate()).padStart(2,'0');
   return monthCode + day;
+}
+
+// Helper: normalize input YYYY-MM-DD or epoch -> epoch seconds pair
+function normalizeDateRange(rangeFrom: string, rangeTo: string): { fromEpoch: number; toEpoch: number } {
+  const isEpoch = (v: string) => /^\d{10}$/.test(v);
+  const toEpoch = (v: string, endOfDay = false) => {
+    if (isEpoch(v)) return parseInt(v, 10);
+    // Assume YYYY-MM-DD; use UTC midnight. If endOfDay, add 86399 seconds.
+    const t = Date.parse(v + 'T00:00:00Z');
+    if (Number.isNaN(t)) throw new Error('Invalid date format: ' + v);
+    return Math.floor(t / 1000) + (endOfDay ? 86399 : 0);
+  };
+  const fromEpoch = toEpoch(rangeFrom, false);
+  const toEpochVal = toEpoch(rangeTo, true); // inclusive to end of day
+  return { fromEpoch, toEpoch: toEpochVal };
 }
