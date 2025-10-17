@@ -47,14 +47,17 @@ const CandlestickChart = ({ data, fibLevels, title }: any) => {
             );
           })}
           
-          {candle.hma && (
+          {data.some((d: any) => d.hma != null) && (
             <polyline
-              points={data.map((d: any, i: number) => {
-                if (d.hma === null) return null;
-                const x = 50 + (i / data.length) * 900;
-                const y = 400 - ((d.hma - yMin) / yRange) * 380;
-                return x + ',' + y;
-              }).filter((p: any) => p !== null).join(' ')}
+              points={data
+                .map((d: any, i: number) => {
+                  if (d.hma == null) return null;
+                  const x = 50 + (i / data.length) * 900;
+                  const y = 400 - ((d.hma - yMin) / yRange) * 380;
+                  return x + ',' + y;
+                })
+                .filter((p: any) => p !== null)
+                .join(' ')}
               fill="none"
               stroke="#3b82f6"
               strokeWidth="2"
