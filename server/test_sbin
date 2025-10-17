@@ -1,0 +1,647 @@
+import webbrowser
+from fyers_apiv3 import fyersModel
+from flask import Flask, request
+import threading
+import time
+import os
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except Exception:
+    requests = None  # type: ignore
+    REQUESTS_AVAILABLE = False
+from datetime import datetime, timedelta
+import pandas as pd
+import math
+
+# Your Fyers API credentials
+client_id = "IPEE9OMDR9-100"
+secret_key = "B66R9UPZR6"
+redirect_uri = "http://127.0.0.1:3002/api/auth/callback"
+
+# Global variable to store auth code
+auth_code = None
+app = Flask(__name__)
+
+@app.route('/api/auth/callback')
+def callback():
+    global auth_code
+    auth_code = request.args.get('auth_code')
+    
+    if auth_code:
+        return """
+        <html>
+            <body style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2 style="color: green;">✓ Authentication Successful!</h2>
+                <p>Authorization code received. You can close this window now.</p>
+                <script>setTimeout(function(){ window.close(); }, 3000);</script>
+            </body>
+        </html>
+        """
+    else:
+        return """
+        <html>
+            <body style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2 style="color: red;">✗ Authentication Failed</h2>
+                <p>No authorization code received.</p>
+            </body>
+        </html>
+        """
+
+def start_server():
+    app.run(port=3002, debug=False, use_reloader=False)
+
+def login_to_fyers():
+    global auth_code
+    
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+    print("Starting local server on port 3002...")
+    time.sleep(2)
+    
+    session = fyersModel.SessionModel(
+        client_id=client_id,
+        secret_key=secret_key,
+        redirect_uri=redirect_uri,
+        response_type="code",
+        grant_type="authorization_code"
+    )
+    
+    auth_url = session.generate_authcode()
+    print(f"\nOpening browser for authentication...")
+    print(f"If browser doesn't open, visit: {auth_url}\n")
+    
+    webbrowser.open(auth_url)
+    
+    print("Waiting for authentication...")
+    timeout = 120
+    start_time = time.time()
+    
+    while auth_code is None:
+        if time.time() - start_time > timeout:
+            print("Authentication timeout. Please try again.")
+            return None
+        time.sleep(1)
+    
+    print(f"✓ Authorization code received!")
+    
+    session.set_token(auth_code)
+    response = session.generate_token()
+    
+    if response.get("code") != 200:
+        print(f"Error generating token: {response}")
+        return None
+    
+    access_token = response["access_token"]
+    print(f"✓ Access Token generated successfully!")
+    
+    with open('fyers_token.txt', 'w') as f:
+        f.write(access_token)
+    print("✓ Access token saved to fyers_token.txt")
+    
+    return access_token
+
+def get_fyers_client():
+    """Get authenticated Fyers client"""
+    
+    try:
+        with open('fyers_token.txt', 'r') as f:
+            access_token = f.read().strip()
+        
+        fyers = fyersModel.FyersModel(
+            client_id=client_id,
+            is_async=False,
+            token=access_token,
+            log_path=""
+        )
+        
+        profile = fyers.get_profile()
+        if profile.get('code') == 200:
+            print("✓ Using existing valid token")
+            return fyers
+        else:
+            print("Existing token invalid, getting new token...")
+            access_token = login_to_fyers()
+    except FileNotFoundError:
+        print("No existing token found, logging in...")
+        access_token = login_to_fyers()
+    
+    if not access_token:
+        return None
+    
+    fyers = fyersModel.FyersModel(
+        client_id=client_id,
+        is_async=False,
+        token=access_token,
+        log_path=""
+    )
+    
+    profile = fyers.get_profile()
+    print(f"✓ Login Successful! User: {profile.get('data', {}).get('name', 'N/A')}")
+    
+    return fyers
+
+
+def round_up_strike(price, base=10):
+    """Round UP to next strike (for high PE) - SBIN uses 10 rupee strikes"""
+    return int(math.ceil(price / base) * base)
+
+
+def round_down_strike(price, base=10):
+    """Round DOWN to previous strike (for low CE) - SBIN uses 10 rupee strikes"""
+    return int(math.floor(price / base) * base)
+
+
+def build_sbin_option_symbol(expiry_date, strike, option_type):
+    """
+    Build Fyers option symbol for SBIN monthly options
+    Format: NSE:SBIN[YY][MMM][STRIKE][CE/PE]
+    Example: NSE:SBIN25OCT850CE for Oct 2025, 850 CE
+    
+    Monthly options use 3-letter month code (JAN, FEB, MAR, etc.)
+    """
+    expiry_dt = datetime.strptime(expiry_date, "%Y-%m-%d")
+    
+    year = expiry_dt.strftime("%y")  # Last 2 digits: 25
+    month = expiry_dt.strftime("%b").upper()  # 3-letter month: OCT, NOV, etc.
+    
+    symbol = f"NSE:SBIN{year}{month}{strike}{option_type}"
+    return symbol
+
+def data_option_chain_v3(access_token: str, underlying_symbol: str, expiry: Optional[str] = None) -> dict:
+    """Fetch option chain using Data API v3 for an underlying.
+    underlying_symbol examples: 'NSE:SBIN-EQ'
+    expiry (optional): 'YYYY-MM-DD' to filter a specific series.
+    """
+    if not REQUESTS_AVAILABLE:
+        raise RuntimeError("The 'requests' package is required. Install with: pip install requests")
+    base = _infer_data_base_url_from_client_id(client_id)
+    url = f"{base}/options-chain-v3"
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    payload = {"symbol": underlying_symbol}
+    if expiry:
+        payload["expiry"] = expiry
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
+
+
+def get_stock_high_low(fyers, symbol, from_date, to_date):
+    """Get stock high and low for a date range"""
+    print("\n" + "="*80)
+    print(f"FETCHING {symbol} HIGH/LOW DATA")
+    print("="*80)
+    print(f"Period: {from_date} to {to_date}\n")
+    
+    data = {
+        "symbol": symbol,
+        "resolution": "D",
+        "date_format": "1",
+        "range_from": from_date,
+        "range_to": to_date,
+        "cont_flag": "1"
+    }
+    
+    response = fyers.history(data)
+    
+    if response.get('code') != 200:
+        print(f"✗ Error: {response}")
+        return None
+    
+    candles = response.get('candles', [])
+    
+    if not candles:
+        print("✗ No data available for this period")
+        return None
+    
+    print(f"✓ Fetched {len(candles)} days of data\n")
+    
+    highs = [candle[2] for candle in candles]
+    lows = [candle[3] for candle in candles]
+    closes = [candle[4] for candle in candles]
+    
+    highest_price = max(highs)
+    lowest_price = min(lows)
+    
+    highest_candle = candles[highs.index(highest_price)]
+    lowest_candle = candles[lows.index(lowest_price)]
+    
+    highest_date = datetime.fromtimestamp(highest_candle[0]).strftime('%Y-%m-%d')
+    lowest_date = datetime.fromtimestamp(lowest_candle[0]).strftime('%Y-%m-%d')
+    
+    first_candle = candles[0]
+    last_candle = candles[-1]
+    
+    first_date = datetime.fromtimestamp(first_candle[0]).strftime('%Y-%m-%d')
+    last_date = datetime.fromtimestamp(last_candle[0]).strftime('%Y-%m-%d')
+    
+    first_close = first_candle[4]
+    last_close = last_candle[4]
+    
+    change = last_close - first_close
+    change_pct = (change / first_close) * 100
+    
+    stats = {
+        'symbol': symbol,
+        'period_start': first_date,
+        'period_end': last_date,
+        'trading_days': len(candles),
+        'highest_price': highest_price,
+        'highest_date': highest_date,
+        'lowest_price': lowest_price,
+        'lowest_date': lowest_date,
+        'range': highest_price - lowest_price,
+        'first_close': first_close,
+        'last_close': last_close,
+        'change': change,
+        'change_percent': change_pct,
+        'average_close': sum(closes) / len(closes),
+        'candles': candles
+    }
+    
+    print("="*80)
+    print(f"{symbol} STATISTICS")
+    print("="*80)
+    print(f"Period:          {first_date} to {last_date}")
+    print(f"Trading Days:    {stats['trading_days']}")
+    print(f"\n{'HIGHEST':-^80}")
+    print(f"Price:           ₹{highest_price:,.2f}")
+    print(f"Date:            {highest_date}")
+    print(f"\n{'LOWEST':-^80}")
+    print(f"Price:           ₹{lowest_price:,.2f}")
+    print(f"Date:            {lowest_date}")
+    print(f"\n{'RANGE & MOVEMENT':-^80}")
+    print(f"Range:           ₹{stats['range']:,.2f} ({(stats['range']/lowest_price)*100:.2f}%)")
+    print(f"Opening:         ₹{first_close:,.2f} ({first_date})")
+    print(f"Closing:         ₹{last_close:,.2f} ({last_date})")
+    print(f"Net Change:      ₹{change:+,.2f} ({change_pct:+.2f}%)")
+    print(f"Average Close:   ₹{stats['average_close']:,.2f}")
+    print("="*80)
+    
+    return stats
+
+
+def get_option_historical_data(fyers, option_symbol, from_date, to_date, resolution="15"):
+    """Fetch historical data for an option"""
+    
+    data = {
+        "symbol": option_symbol,
+        "resolution": resolution,
+        "date_format": "1",
+        "range_from": from_date,
+        "range_to": to_date,
+        "cont_flag": "1"
+    }
+    
+    print(f"   DEBUG - Request: {data}")
+    response = fyers.history(data)
+    print(f"   DEBUG - Response Code: {response.get('code')}, Message: {response.get('message', 'N/A')}")
+    
+    # If SDK path fails (e.g., -300 invalid symbol), try Data API directly
+    if response.get('code') == 200:
+        return response.get('candles', [])
+    
+    print("   INFO - Falling back to Data API /history...")
+    token = get_access_token_from_env_or_file()
+    if not token:
+        print("   WARN - No access token available for Data API fallback. Set FYERS_ACCESS_TOKEN or create fyers_token.txt")
+        return None
+    try:
+        # Validate symbol quickly via /data/quotes
+        q = data_quotes_via_requests(token, option_symbol)
+        if isinstance(q, dict) and q.get('code') == -300:
+            print("   HINT - Invalid symbol. For monthly options use 3-letter month code (e.g., SEP, OCT). For weekly options use 1..9,O,N,D plus day.")
+        # Fetch history via Data API
+        h = data_history_via_requests(token, option_symbol, from_date, to_date, resolution=resolution, date_format=1)
+        print(f"   DEBUG - Data API status: {h.get('code', h.get('s', 'N/A'))}, Message: {h.get('message', h.get('msg', ''))}")
+        if h.get('code') == 200 or h.get('s') == 'ok':
+            return h.get('candles', [])
+        return None
+    except Exception as e:
+        print(f"   ERROR - Data API fallback failed: {e}")
+        return None
+
+def _infer_data_base_url_from_client_id(cid: str) -> str:
+    return "https://api-t1.fyers.in/data" if cid.endswith("-100") else "https://api.fyers.in/data"
+
+def _to_epoch(date_str: str) -> int:
+    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+def get_access_token_from_env_or_file() -> str | None:
+    token = os.environ.get("FYERS_ACCESS_TOKEN")
+    if token:
+        return token.strip()
+    try:
+        with open('fyers_token.txt', 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+
+def data_history_via_requests(access_token: str, symbol: str, range_from: str, range_to: str, resolution: str = "15", date_format: int = 1, cont_flag: str = "1") -> dict:
+    if not REQUESTS_AVAILABLE:
+        raise RuntimeError("The 'requests' package is required. Install with: pip install requests")
+    base = _infer_data_base_url_from_client_id(client_id)
+    url = f"{base}/history"
+    payload: dict[str, object] = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "date_format": date_format,
+        "cont_flag": cont_flag,
+    }
+    if date_format == 1:
+        payload.update({"range_from": range_from, "range_to": range_to})
+    else:
+        payload.update({"range_from": _to_epoch(range_from), "range_to": _to_epoch(range_to)})
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
+
+def data_quotes_via_requests(access_token: str, symbol: str) -> dict:
+    if not REQUESTS_AVAILABLE:
+        raise RuntimeError("The 'requests' package is required. Install with: pip install requests")
+    base = _infer_data_base_url_from_client_id(client_id)
+    url = f"{base}/quotes"
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    payload = {"symbols": symbol}
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=15)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
+
+
+def analyze_options_based_on_stock_range(fyers, stock_stats, expiry_date, from_date, to_date):
+    """
+    Based on stock high/low:
+    - High: Round UP to next 10 → Select PE
+    - Low: Round DOWN to previous 10 → Select CE
+    - Fetch historical data for these options
+    """
+    print("\n" + "="*80)
+    print("ANALYZING OPTIONS BASED ON STOCK RANGE")
+    print("="*80)
+    
+    high = stock_stats['highest_price']
+    low = stock_stats['lowest_price']
+    
+    # Round UP high for PE, Round DOWN low for CE (₹10 strikes for SBIN)
+    high_strike = round_up_strike(high, 10)
+    low_strike = round_down_strike(low, 10)
+    
+    print(f"\nStock High: ₹{high:,.2f} → ROUND UP → Strike: {high_strike}")
+    print(f"Stock Low:  ₹{low:,.2f} → ROUND DOWN → Strike: {low_strike}")
+    
+    print(f"\nSelected Strikes:")
+    print(f"  • High Strike PE: {high_strike}PE")
+    print(f"  • Low Strike CE:  {low_strike}CE")
+    
+    # Build option symbols for SBIN monthly options (initial attempt)
+    high_pe_symbol = build_sbin_option_symbol(expiry_date, high_strike, "PE")
+    low_ce_symbol = build_sbin_option_symbol(expiry_date, low_strike, "CE")
+
+    # Validate/adjust via Option Chain if SDK history returns -300 later
+    token = get_access_token_from_env_or_file()
+    chain_symbols = {"PE": high_pe_symbol, "CE": low_ce_symbol}
+    if token:
+        try:
+            chain = data_option_chain_v3(token, "NSE:SBIN-EQ", expiry=expiry_date)
+            # Chain format: expect a list of entries with 'strike_price', 'call_symbol', 'put_symbol' or similar
+            entries = chain.get("data") or chain.get("optionChain") or []
+            if isinstance(entries, dict) and "options" in entries:
+                entries = entries["options"]
+            # Find nearest available strikes
+            def nearest_symbol(strike: int, typ: str) -> str | None:
+                best = None
+                best_diff = 10**9
+                for item in entries:
+                    sp = item.get("strike_price") or item.get("strikePrice") or item.get("strike")
+                    if sp is None:
+                        continue
+                    try:
+                        sp_i = int(float(sp))
+                    except Exception:
+                        continue
+                    diff = abs(sp_i - strike)
+                    if diff < best_diff:
+                        # symbol fields vary; try common keys
+                        sym = None
+                        if typ == "CE":
+                            sym = item.get("call_symbol") or item.get("CE_symbol") or item.get("callSymbol") or item.get("symbolCE")
+                        else:
+                            sym = item.get("put_symbol") or item.get("PE_symbol") or item.get("putSymbol") or item.get("symbolPE")
+                        if sym:
+                            best = sym
+                            best_diff = diff
+                return best
+            ce_sym = nearest_symbol(low_strike, "CE")
+            pe_sym = nearest_symbol(high_strike, "PE")
+            if ce_sym:
+                low_ce_symbol = ce_sym
+            if pe_sym:
+                high_pe_symbol = pe_sym
+        except Exception as e:
+            print(f"   WARN - Option chain lookup failed: {e}")
+    
+    print(f"\n{'='*80}")
+    print("BUILT OPTION SYMBOLS")
+    print(f"{'='*80}")
+    print(f"High Strike PE: {high_pe_symbol}")
+    print(f"Low Strike CE:  {low_ce_symbol}")
+    print(f"Expiry Date:    {expiry_date}")
+    
+    # Fetch historical data
+    print(f"\n{'='*80}")
+    print("FETCHING HISTORICAL OPTION DATA")
+    print(f"{'='*80}")
+    print(f"Date Range: {from_date} to {to_date}")
+    print(f"Resolution: 15-minute candles")
+    
+    print(f"\n1. Fetching {high_pe_symbol} history...")
+    high_pe_candles = get_option_historical_data(fyers, high_pe_symbol, from_date, to_date, "15")
+    
+    if high_pe_candles and len(high_pe_candles) > 0:
+        print(f"   ✓ Fetched {len(high_pe_candles)} candles")
+        first = high_pe_candles[0]
+        last = high_pe_candles[-1]
+        first_time = datetime.fromtimestamp(first[0]).strftime('%Y-%m-%d %H:%M')
+        last_time = datetime.fromtimestamp(last[0]).strftime('%Y-%m-%d %H:%M')
+        print(f"   First: {first_time} @ ₹{first[4]:.2f}")
+        print(f"   Last:  {last_time} @ ₹{last[4]:.2f}")
+        
+        premiums = [c[4] for c in high_pe_candles]
+        print(f"   High Premium: ₹{max(premiums):.2f}")
+        print(f"   Low Premium: ₹{min(premiums):.2f}")
+        print(f"   Avg Premium: ₹{sum(premiums)/len(premiums):.2f}")
+    else:
+        print(f"   ✗ No data available for this period")
+    
+    print(f"\n2. Fetching {low_ce_symbol} history...")
+    low_ce_candles = get_option_historical_data(fyers, low_ce_symbol, from_date, to_date, "15")
+    
+    if low_ce_candles and len(low_ce_candles) > 0:
+        print(f"   ✓ Fetched {len(low_ce_candles)} candles")
+        first = low_ce_candles[0]
+        last = low_ce_candles[-1]
+        first_time = datetime.fromtimestamp(first[0]).strftime('%Y-%m-%d %H:%M')
+        last_time = datetime.fromtimestamp(last[0]).strftime('%Y-%m-%d %H:%M')
+        print(f"   First: {first_time} @ ₹{first[4]:.2f}")
+        print(f"   Last:  {last_time} @ ₹{last[4]:.2f}")
+        
+        premiums = [c[4] for c in low_ce_candles]
+        print(f"   High Premium: ₹{max(premiums):.2f}")
+        print(f"   Low Premium: ₹{min(premiums):.2f}")
+        print(f"   Avg Premium: ₹{sum(premiums)/len(premiums):.2f}")
+    else:
+        print(f"   ✗ No data available for this period")
+    
+    # Export to CSV
+    print(f"\n{'='*80}")
+    print("EXPORTING DATA TO CSV")
+    print(f"{'='*80}")
+    
+    if high_pe_candles and len(high_pe_candles) > 0:
+        df_pe = pd.DataFrame(high_pe_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df_pe['datetime'] = pd.to_datetime(df_pe['timestamp'], unit='s')
+        df_pe = df_pe[['datetime', 'open', 'high', 'low', 'close', 'volume']]
+        filename_pe = f"SBIN_{high_strike}PE_{expiry_date.replace('-', '')}_history.csv"
+        df_pe.to_csv(filename_pe, index=False)
+        print(f"✓ Exported: {filename_pe}")
+    else:
+        print(f"✗ No data to export for {high_strike}PE")
+    
+    if low_ce_candles and len(low_ce_candles) > 0:
+        df_ce = pd.DataFrame(low_ce_candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df_ce['datetime'] = pd.to_datetime(df_ce['timestamp'], unit='s')
+        df_ce = df_ce[['datetime', 'open', 'high', 'low', 'close', 'volume']]
+        filename_ce = f"SBIN_{low_strike}CE_{expiry_date.replace('-', '')}_history.csv"
+        df_ce.to_csv(filename_ce, index=False)
+        print(f"✓ Exported: {filename_ce}")
+    else:
+        print(f"✗ No data to export for {low_strike}CE")
+    
+    return {
+        'high_pe': {
+            'symbol': high_pe_symbol,
+            'strike': high_strike,
+            'candles': high_pe_candles
+        },
+        'low_ce': {
+            'symbol': low_ce_symbol,
+            'strike': low_strike,
+            'candles': low_ce_candles
+        }
+    }
+
+
+if __name__ == "__main__":
+    print("\n" + "="*80)
+    print("STOCK OPTIONS STRATEGY ANALYZER - SBIN")
+    print("="*80)
+    print("Testing with SBIN monthly options (simpler format)")
+    print("="*80 + "\n")
+    
+    # Step 1: Authenticate
+    fyers = get_fyers_client()
+    
+    if not fyers:
+        print("Failed to authenticate. Exiting.")
+        exit(1)
+    
+    # Step 2: Get inputs
+    print("\n" + "="*80)
+    print("INPUT DATE PARAMETERS")
+    print("="*80)
+    print("Format: YYYY-MM-DD")
+    print("Note: SBIN uses monthly options (last Thursday of month)")
+    print("="*80 + "\n")
+    
+    from_date = input("1. From Date (for SBIN range analysis): ").strip()
+    if not from_date:
+        print("✗ From Date is required!")
+        exit(1)
+    
+    to_date = input("2. To Date (for SBIN range analysis): ").strip()
+    if not to_date:
+        print("✗ To Date is required!")
+        exit(1)
+    
+    expiry_date = input("3. Option Expiry Date (YYYY-MM-DD, e.g., 2024-10-31 for Oct expiry): ").strip()
+    if not expiry_date:
+        print("✗ Option Expiry Date is required!")
+        exit(1)
+    
+    # Validate dates
+    try:
+        datetime.strptime(from_date, "%Y-%m-%d")
+        datetime.strptime(to_date, "%Y-%m-%d")
+        datetime.strptime(expiry_date, "%Y-%m-%d")
+    except ValueError:
+        print("✗ Invalid date format! Use YYYY-MM-DD")
+        exit(1)
+    
+    print(f"\n{'='*80}")
+    print("SUMMARY OF INPUTS")
+    print(f"{'='*80}")
+    print(f"Stock: SBIN (State Bank of India)")
+    print(f"Analysis Period: {from_date} to {to_date}")
+    print(f"Option Expiry:   {expiry_date}")
+    print(f"{'='*80}")
+    
+    # Step 3: Get SBIN high/low
+    sbin_stats = get_stock_high_low(fyers, "NSE:SBIN-EQ", from_date, to_date)
+    
+    if not sbin_stats:
+        print("✗ Could not fetch SBIN data")
+        exit(1)
+    
+    # Export SBIN data
+    df_stock = pd.DataFrame(sbin_stats['candles'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df_stock['date'] = pd.to_datetime(df_stock['timestamp'], unit='s')
+    df_stock = df_stock[['date', 'open', 'high', 'low', 'close', 'volume']]
+    stock_filename = f"SBIN_data_{from_date.replace('-', '')}_{to_date.replace('-', '')}.csv"
+    df_stock.to_csv(stock_filename, index=False)
+    print(f"\n✓ Exported SBIN data to: {stock_filename}")
+    
+    # Step 4: Analyze options
+    options_result = analyze_options_based_on_stock_range(
+        fyers, 
+        sbin_stats, 
+        expiry_date,
+        from_date,
+        to_date
+    )
+    
+    # Step 5: Final Summary
+    print("\n" + "="*80)
+    print("ANALYSIS COMPLETE!")
+    print("="*80)
+    
+    if options_result:
+        print(f"\n✓ SBIN Range: ₹{sbin_stats['lowest_price']:,.2f} to ₹{sbin_stats['highest_price']:,.2f}")
+        print(f"\n✓ Options Selected for Expiry {expiry_date}:")
+        print(f"  • {options_result['high_pe']['symbol']} (Strike: {options_result['high_pe']['strike']})")
+        print(f"  • {options_result['low_ce']['symbol']} (Strike: {options_result['low_ce']['strike']})")
+        
+        if options_result['high_pe']['candles']:
+            print(f"\n✓ High PE Data: {len(options_result['high_pe']['candles'])} candles")
+        else:
+            print(f"\n✗ High PE: No data")
+            
+        if options_result['low_ce']['candles']:
+            print(f"✓ Low CE Data: {len(options_result['low_ce']['candles'])} candles")
+        else:
+            print(f"✗ Low CE: No data")
+        
+        if options_result['high_pe']['candles'] or options_result['low_ce']['candles']:
+            print(f"\n✓ CSV files generated!")
+    
+    print("\n" + "="*80)
