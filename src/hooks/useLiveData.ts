@@ -56,16 +56,29 @@ export const useLiveData = (config: LiveDataConfig) => {
         resolution
       });
 
-      // Transform helper
-      const transformData = (candles: number[][]): CandlePoint[] => candles.map((candle, idx) => ({
-        time: new Date(candle[0] * 1000).toLocaleString(),
-        timestamp: candle[0],
-        open: candle[1],
-        high: candle[2],
-        low: candle[3],
-        close: candle[4],
-        idx
-      }));
+      // Transform helper - Convert timestamps to IST (India Standard Time - UTC+5:30)
+      const transformData = (candles: number[][]): CandlePoint[] => candles.map((candle, idx) => {
+        const utcDate = new Date(candle[0] * 1000);
+        // Format in IST timezone
+        const istString = utcDate.toLocaleString('en-IN', { 
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        });
+        return {
+          time: istString,
+          timestamp: candle[0],
+          open: candle[1],
+          high: candle[2],
+          low: candle[3],
+          close: candle[4],
+          idx
+        };
+      });
 
       const peCandles = analysis?.series?.pe?.candles || [];
       const ceCandles = analysis?.series?.ce?.candles || [];

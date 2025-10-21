@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { fyersService } from '../services/fyersService.js';
 import { requireAuth } from '../middleware/requireAuth.js';
-import { parseOptionSymbol, buildWeeklyOptionSymbol, weekMonthCodeMap } from '../services/symbolUtils.js';
+import { parseOptionSymbol, buildWeeklyOptionSymbol, buildMonthlyOptionSymbol, weekMonthCodeMap } from '../services/symbolUtils.js';
 
 export const fyersDataRouter = express.Router();
 
@@ -93,7 +93,26 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
     const chain = await fyersService.getOptionChain({ symbol: 'NSE:NIFTY50-INDEX' });
     console.log('[analyze-weekly] Raw chain response keys:', Object.keys(chain || {}));
     console.log('[analyze-weekly] Chain data keys:', Object.keys(chain?.data || {}));
-    const expiries: string[] = chain?.data?.expiries || chain?.data?.expiry || chain?.data?.expiryList || [];
+    
+    // Extract expiries from the expiryData field
+    let expiries: string[] = [];
+    if (chain?.data?.expiryData) {
+      console.log('[analyze-weekly] ExpiryData structure:', JSON.stringify(chain.data.expiryData, null, 2));
+      // Try different possible structures for expiry data
+      if (Array.isArray(chain.data.expiryData)) {
+        expiries = chain.data.expiryData;
+      } else if (chain.data.expiryData.expiries) {
+        expiries = chain.data.expiryData.expiries;
+      } else if (chain.data.expiryData.expiryList) {
+        expiries = chain.data.expiryData.expiryList;
+      }
+    }
+    
+    // Fallback to other possible fields
+    if (!expiries.length) {
+      expiries = chain?.data?.expiries || chain?.data?.expiry || chain?.data?.expiryList || [];
+    }
+    
     console.log('[analyze-weekly] Requested expiry:', expiry);
     console.log('[analyze-weekly] Available expiries from chain:', expiries);
     const eff = suggestExpiry(expiry, expiries);
@@ -104,8 +123,34 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
     const year = effDate.getFullYear();
     const month = effDate.getMonth() + 1;
     const day = effDate.getDate();
-    let peSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, day, strike: peStrike, optType: 'PE' });
-    let ceSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, day, strike: ceStrike, optType: 'CE' });
+
+    // Helper: determine if a given date is the last Tuesday of its month
+    const isLastTuesday = (d: Date) => {
+      // Check if it's a Tuesday first
+      if (d.getDay() !== 2) return false; // 0=Sun, 2=Tue
+      // Add 7 days and see if we're in a different month
+      const next = new Date(d);
+      next.setDate(next.getDate() + 7);
+      return next.getMonth() !== d.getMonth();
+    };
+
+    console.log('[analyze-weekly] Building symbols with:', { year, month, day, peStrike, ceStrike, eff, isLastTuesday: isLastTuesday(effDate) });
+
+    let peSymbol: string;
+    let ceSymbol: string;
+
+    // If the effective expiry falls on the last Tuesday of the month, treat it as a monthly expiry
+    if (isLastTuesday(effDate)) {
+      console.log('[analyze-weekly] Effective expiry is last Tuesday of month -> using monthly option symbol format');
+      peSymbol = buildMonthlyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, strike: peStrike, optType: 'PE' });
+      ceSymbol = buildMonthlyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, strike: ceStrike, optType: 'CE' });
+    } else {
+      // Weekly format
+      peSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, day, strike: peStrike, optType: 'PE' });
+      ceSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, day, strike: ceStrike, optType: 'CE' });
+    }
+
+    console.log('[analyze-weekly] Final symbols chosen:', { peSymbol, ceSymbol });
 
     // 3b) Resolve exact tradable symbols from chain near desired strikes
     try {
@@ -127,33 +172,65 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
       console.warn('[analyze-weekly] Chain resolution failed, using built symbols. Error:', e.message);
     }
 
-    // 4) 30-day window up to expiry (Data API uses date_format=1 for YYYY-MM-DD)
+    // 4) 90-day window up to expiry (Fyers API limit is 100 days, using 90 for safety)
     const windowStart = new Date(effDate);
-    windowStart.setDate(windowStart.getDate() - 30);
+    windowStart.setDate(windowStart.getDate() - 90);
     const rangeFrom = windowStart.toISOString().slice(0,10);
     const rangeTo = eff;
+    
+    // Calculate the number of days in the window
+    const daysDiff = Math.ceil((effDate.getTime() - windowStart.getTime()) / (1000 * 60 * 60 * 24));
+    console.log('[analyze-weekly] Data window:', { rangeFrom, rangeTo, days: daysDiff });
 
-    // 4b) Fetch data with simple retry if symbol invalid (-300): attempt without leading zero day
-    const fetchWithRetry = async (sym: string) => {
-      try {
-        return await fyersService.getChartData({ symbol: sym, resolution: String(resolution), rangeFrom, rangeTo, dateFormat: '1' });
-      } catch (e: any) {
-        const msg = e?.message || '';
-        if (msg.includes('Invalid symbol') && /\d{2}[OND1-9]\d{2}/.test(sym)) {
-          // Try without leading zero in day (e.g., O07 -> O7)
-          const alt = sym.replace(/([OND1-9])0(\d)(\d+)(CE|PE)$/, '$1$2$3$4');
-          if (alt !== sym) {
-            console.warn('[analyze-weekly] Retrying with alt day format', { sym, alt });
-            return await fyersService.getChartData({ symbol: alt, resolution: String(resolution), rangeFrom, rangeTo, dateFormat: '1' });
+    // 4b) Fetch data with multiple retry strategies
+    const fetchWithRetry = async (sym: string, type: 'PE' | 'CE') => {
+      console.log(`[analyze-weekly] Attempting to fetch ${type} data for symbol:`, sym);
+      
+      const trySymbolVariations = async (baseSymbol: string) => {
+        const variations: string[] = [baseSymbol]; // Original first
+        
+        // Only try NIFTY50 variation if current symbol uses NIFTY (and doesn't already have NIFTY50)
+        if (baseSymbol.includes('NIFTY') && !baseSymbol.includes('NIFTY50')) {
+          variations.push(baseSymbol.replace('NIFTY', 'NIFTY50'));
+        }
+        // Only try NIFTY variation if current symbol uses NIFTY50
+        if (baseSymbol.includes('NIFTY50')) {
+          variations.push(baseSymbol.replace('NIFTY50', 'NIFTY'));
+        }
+        
+        // Try with single digit day if current has leading zero (for weekly options)
+        if (/([OND1-9])0(\d)/.test(baseSymbol)) {
+          const altDay = baseSymbol.replace(/([OND1-9])0(\d)(\d+)(CE|PE)$/, '$1$2$3$4');
+          if (!variations.includes(altDay)) {
+            variations.push(altDay);
           }
         }
-        throw e;
-      }
+        
+        for (const variation of variations) {
+          try {
+            console.log(`[analyze-weekly] Trying ${type} variation:`, variation);
+            const result = await fyersService.getChartData({ 
+              symbol: variation, 
+              resolution: String(resolution), 
+              rangeFrom, 
+              rangeTo, 
+              dateFormat: '1' 
+            });
+            console.log(`[analyze-weekly] Success with ${type} symbol:`, variation);
+            return result;
+          } catch (e: any) {
+            console.log(`[analyze-weekly] Failed ${type} variation ${variation}:`, e?.message?.substring(0, 100));
+          }
+        }
+        throw new Error(`All symbol variations failed for ${type}: ${variations.join(', ')}`);
+      };
+      
+      return await trySymbolVariations(sym);
     };
 
     const [peData, ceData] = await Promise.all([
-      fetchWithRetry(peSymbol),
-      fetchWithRetry(ceSymbol)
+      fetchWithRetry(peSymbol, 'PE'),
+      fetchWithRetry(ceSymbol, 'CE')
     ]);
 
     return res.json({
@@ -161,6 +238,7 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
       range: { high, low },
       strikes: { pe: peStrike, ce: ceStrike },
       symbols: { pe: peSymbol, ce: ceSymbol },
+      dataWindow: { from: rangeFrom, to: rangeTo, days: daysDiff },
       series: { pe: peData, ce: ceData }
     });
   } catch (error: any) {

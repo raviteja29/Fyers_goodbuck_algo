@@ -10,10 +10,11 @@ interface NiftyFibStrategyProps {
 
 const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) => {
   const [selectedView, setSelectedView] = useState('pe_chart');
-  const [timeframe, setTimeframe] = useState('60');
+  const [timeframe, setTimeframe] = useState<'15' | '60'>('60'); // Default to 1Hr
+  const [dataLoaded, setDataLoaded] = useState(false); // Track if data has been loaded
   
-  // Date range for historical data - 3 months back
-  const [dateRange] = useState(() => {
+  // Date range for historical data - 3 months back (editable)
+  const [dateRange, setDateRange] = useState(() => {
     const today = new Date();
     const threeMonthsAgo = new Date(today);
     threeMonthsAgo.setMonth(today.getMonth() - 3);
@@ -29,8 +30,23 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
     enabled: false, // Changed from isAuthenticated to false - no auto-load
     rangeFrom: dateRange.from,
     rangeTo: dateRange.to,
-    refreshInterval: 60000  // Refresh every minute
+    refreshInterval: 60000,  // Refresh every minute
+    resolution: timeframe  // Pass the selected timeframe
   });
+
+  // Track when data is loaded
+  React.useEffect(() => {
+    if (peData || ceData) {
+      setDataLoaded(true);
+    }
+  }, [peData, ceData]);
+
+  // Auto-refetch when timeframe changes if data is already loaded
+  React.useEffect(() => {
+    if (dataLoaded && !loading) {
+      refetch();
+    }
+  }, [timeframe]); // Only depend on timeframe, not dataLoaded or refetch
 
   const calculateHMA = (data: any[], period = 50) => {
     const result = [];
@@ -142,106 +158,193 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
     return selectedView.includes('pe') ? peFibLevels : ceFibLevels;
   };
 
+  const hasData = niftyRange && strikes && (processedPeData?.length || processedCeData?.length);
+
   return (
-    <div className="w-full max-w-7xl mx-auto p-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-xl shadow-2xl">
+    <div className="w-full max-w-7xl mx-auto p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white rounded-xl shadow-2xl border border-slate-700/50">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-          NIFTY Fibonacci Options Strategy - Live Data
+        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-500 bg-clip-text text-transparent">
+          NIFTY Fibonacci Options Strategy
         </h1>
-        <p className="text-slate-400">Data Range: {dateRange.from} to {dateRange.to}</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">NIFTY Range</div>
-          {niftyRange && (
-            <>
-              <div className="text-2xl font-bold text-green-400">H: {niftyRange.high.toFixed(2)}</div>
-              <div className="text-2xl font-bold text-red-400">L: {niftyRange.low.toFixed(2)}</div>
-            </>
-          )}
-        </div>
-
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">Calculated Strikes</div>
-          {strikes && (
-            <>
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingDown className="w-4 h-4 text-red-400" />
-                <span className="text-xl font-bold">{strikes.pe} PE</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-green-400" />
-                <span className="text-xl font-bold">{strikes.ce} CE</span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-          <div className="text-slate-400 text-sm mb-1">Data Points</div>
-          <div className="text-lg font-bold text-blue-400">
-            PE: {processedPeData?.length || 0} candles
-          </div>
-          <div className="text-lg font-bold text-blue-400">
-            CE: {processedCeData?.length || 0} candles
-          </div>
-          <button
-            onClick={refetch}
-            className="mt-2 text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
-          >
-            <RefreshCw className="w-3 h-3" />
-            Refresh
-          </button>
+        <div className="flex items-center gap-4 flex-wrap text-sm">
+          <p className="text-slate-400">Market: 9:15 AM - 3:30 PM IST</p>
         </div>
       </div>
 
-      <div className="mb-4">
+      {/* Date Range Selector */}
+      <div className="mb-6 bg-slate-800/50 border border-slate-600/50 rounded-lg p-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-slate-300 text-sm mb-2 font-medium">From Date</label>
+            <input 
+              type="date"
+              className="w-full bg-slate-800 text-slate-100 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+              value={dateRange.from} 
+              onChange={e => setDateRange(prev => ({ ...prev, from: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="block text-slate-300 text-sm mb-2 font-medium">To Date</label>
+            <input 
+              type="date"
+              className="w-full bg-slate-800 text-slate-100 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+              value={dateRange.to} 
+              onChange={e => setDateRange(prev => ({ ...prev, to: e.target.value }))}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6 flex items-center gap-4 flex-wrap">
         <button
           onClick={refetch}
           disabled={!isAuthenticated || loading}
-          className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white rounded-lg font-medium transition-colors"
+          className="px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-slate-600 disabled:to-slate-700 text-white rounded-lg font-semibold transition-all transform hover:scale-105 disabled:hover:scale-100 shadow-lg disabled:shadow-none flex items-center gap-2"
         >
-          {loading ? 'Loading...' : 'Load Data'}
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? 'Loading Live Data...' : 'Load Live Data'}
         </button>
         {!isAuthenticated && <span className="ml-3 text-amber-400 text-sm">Login first to load data</span>}
+        
+        {/* Timeframe Toggle */}
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="text-slate-400 text-sm font-medium">Timeframe:</span>
+          <div className="flex gap-1 bg-slate-800 p-1 rounded-lg border border-slate-600">
+            <button
+              onClick={() => setTimeframe('15')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-all ${
+                timeframe === '15'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              15 Min
+            </button>
+            <button
+              onClick={() => setTimeframe('60')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-all ${
+                timeframe === '60'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              1 Hour
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="flex gap-2 mb-4 flex-wrap">
-        <button
-          onClick={() => setSelectedView('pe_chart')}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'pe_chart' ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-        >
-          {strikes?.pe} PE Chart
-        </button>
-        <button
-          onClick={() => setSelectedView('ce_chart')}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'ce_chart' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-        >
-          {strikes?.ce} CE Chart
-        </button>
-        <button
-          onClick={() => setSelectedView('compare')}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'compare' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-        >
-          <GitCompare className="w-4 h-4 inline mr-2" />
-          Compare
-        </button>
-        <button
-          onClick={() => setSelectedView('pe_fib')}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'pe_fib' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-        >
-          PE Fib Levels
-        </button>
-        <button
-          onClick={() => setSelectedView('ce_fib')}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${selectedView === 'ce_fib' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-        >
-          CE Fib Levels
-        </button>
-      </div>
+      {hasData && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 p-5 rounded-lg border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <div className="text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">NIFTY Range</div>
+            {niftyRange && (
+              <div className="space-y-1">
+                <div className="text-2xl font-bold text-emerald-400">H: {niftyRange.high.toFixed(2)}</div>
+                <div className="text-2xl font-bold text-rose-400">L: {niftyRange.low.toFixed(2)}</div>
+              </div>
+            )}
+          </div>
 
-      {(selectedView === 'pe_chart' || selectedView === 'ce_chart') && getCurrentData() && getCurrentData()!.length > 0 && (
+          <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 p-5 rounded-lg border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <div className="text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">Calculated Strikes</div>
+            {strikes && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-5 h-5 text-rose-400" />
+                  <span className="text-xl font-bold text-rose-400">{strikes.pe} PE</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-400" />
+                  <span className="text-xl font-bold text-emerald-400">{strikes.ce} CE</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 p-5 rounded-lg border border-slate-600/50 backdrop-blur-sm shadow-lg">
+            <div className="text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">Data Points</div>
+            <div className="space-y-1">
+              <div className="text-lg font-bold text-indigo-400">
+                PE: {processedPeData?.length || 0} candles
+              </div>
+              <div className="text-lg font-bold text-indigo-400">
+                CE: {processedCeData?.length || 0} candles
+              </div>
+            </div>
+            <button
+              onClick={refetch}
+              disabled={loading}
+              className="mt-3 text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+              Refresh Data
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hasData && (
+        <>
+          <div className="flex gap-2 mb-6 flex-wrap">
+            <button
+              onClick={() => setSelectedView('pe_chart')}
+              className={`px-5 py-2.5 rounded-lg font-medium transition-all transform hover:scale-105 shadow-lg ${
+                selectedView === 'pe_chart' 
+                  ? 'bg-gradient-to-r from-rose-600 to-red-600 text-white shadow-rose-500/50' 
+                  : 'bg-slate-700/50 text-slate-300 hover:bg-slate-600/50 border border-slate-600'
+              }`}
+            >
+              <TrendingDown className="w-4 h-4 inline mr-2" />
+              {strikes?.pe} PE Chart
+            </button>
+            <button
+              onClick={() => setSelectedView('ce_chart')}
+              className={`px-5 py-2.5 rounded-lg font-medium transition-all transform hover:scale-105 shadow-lg ${
+                selectedView === 'ce_chart' 
+                  ? 'bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-emerald-500/50' 
+                  : 'bg-slate-700/50 text-slate-300 hover:bg-slate-600/50 border border-slate-600'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4 inline mr-2" />
+              {strikes?.ce} CE Chart
+            </button>
+            <button
+              onClick={() => setSelectedView('compare')}
+              className={`px-5 py-2.5 rounded-lg font-medium transition-all transform hover:scale-105 shadow-lg ${
+                selectedView === 'compare' 
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-blue-500/50' 
+                  : 'bg-slate-700/50 text-slate-300 hover:bg-slate-600/50 border border-slate-600'
+              }`}
+            >
+              <GitCompare className="w-4 h-4 inline mr-2" />
+              Compare
+            </button>
+            <button
+              onClick={() => setSelectedView('pe_fib')}
+              className={`px-5 py-2.5 rounded-lg font-medium transition-all transform hover:scale-105 shadow-lg ${
+                selectedView === 'pe_fib' 
+                  ? 'bg-gradient-to-r from-purple-600 to-violet-600 text-white shadow-purple-500/50' 
+                  : 'bg-slate-700/50 text-slate-300 hover:bg-slate-600/50 border border-slate-600'
+              }`}
+            >
+              PE Fib Levels
+            </button>
+            <button
+              onClick={() => setSelectedView('ce_fib')}
+              className={`px-5 py-2.5 rounded-lg font-medium transition-all transform hover:scale-105 shadow-lg ${
+                selectedView === 'ce_fib' 
+                  ? 'bg-gradient-to-r from-purple-600 to-violet-600 text-white shadow-purple-500/50' 
+                  : 'bg-slate-700/50 text-slate-300 hover:bg-slate-600/50 border border-slate-600'
+              }`}
+            >
+              CE Fib Levels
+            </button>
+          </div>
+        </>
+      )}
+
+      {hasData && (selectedView === 'pe_chart' || selectedView === 'ce_chart') && getCurrentData() && getCurrentData()!.length > 0 && (
         <LightweightCandlestickChart 
           data={getCurrentData()!} 
           fibLevels={getCurrentFib()} 
@@ -251,33 +354,35 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
         />
       )}
 
-      {selectedView === 'compare' && processedPeData && processedCeData && (
-        <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-          <h3 className="text-lg font-semibold mb-4">Compare: {strikes?.pe} PE vs {strikes?.ce} CE</h3>
+      {hasData && selectedView === 'compare' && processedPeData && processedCeData && (
+        <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 p-6 rounded-lg border border-slate-600/50 backdrop-blur-sm shadow-xl">
+          <h3 className="text-xl font-semibold mb-5 bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+            Compare: {strikes?.pe} PE vs {strikes?.ce} CE
+          </h3>
           <ResponsiveContainer width="100%" height={450}>
             <LineChart>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis dataKey="time" stroke="#94a3b8" angle={-45} textAnchor="end" height={80} />
               <YAxis stroke="#94a3b8" />
-              <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
+              <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569', borderRadius: '0.5rem' }} />
               <Legend />
-              <Line data={processedPeData} type="monotone" dataKey="close" stroke="#ef4444" strokeWidth={2} dot={false} name={`${strikes?.pe} PE`} />
-              <Line data={processedCeData} type="monotone" dataKey="close" stroke="#22c55e" strokeWidth={2} dot={false} name={`${strikes?.ce} CE`} />
+              <Line data={processedPeData} type="monotone" dataKey="close" stroke="#f43f5e" strokeWidth={2} dot={false} name={`${strikes?.pe} PE`} />
+              <Line data={processedCeData} type="monotone" dataKey="close" stroke="#10b981" strokeWidth={2} dot={false} name={`${strikes?.ce} CE`} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
 
-      {(selectedView === 'pe_fib' || selectedView === 'ce_fib') && (
-        <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-          <h3 className="text-lg font-semibold mb-4">
+      {hasData && (selectedView === 'pe_fib' || selectedView === 'ce_fib') && (
+        <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 p-6 rounded-lg border border-slate-600/50 backdrop-blur-sm shadow-xl">
+          <h3 className="text-xl font-semibold mb-5 bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
             {selectedView === 'pe_fib' ? `${strikes?.pe} PE` : `${strikes?.ce} CE`} Fibonacci Levels
           </h3>
           <div className="space-y-3">
             {Object.entries(getCurrentFib()).reverse().map(([level, price]: any) => (
-              <div key={level} className="flex justify-between items-center p-3 bg-slate-700 rounded-lg">
-                <span className="font-medium">Fib {level}</span>
-                <span className="font-bold text-lg">₹{price.toFixed(2)}</span>
+              <div key={level} className="flex justify-between items-center p-4 bg-gradient-to-r from-slate-700/50 to-slate-800/50 rounded-lg border border-slate-600/30 hover:border-purple-500/50 transition-all">
+                <span className="font-semibold text-purple-300">Fib {level}</span>
+                <span className="font-bold text-xl text-white">₹{price.toFixed(2)}</span>
               </div>
             ))}
           </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 
 interface CandleData {
   time: number | string;
@@ -17,6 +17,8 @@ interface LightweightCandlestickChartProps {
   showHMA?: boolean;
   fibLevels?: Record<string, number>;
   height?: number;
+  timeframeLabel?: string;
+  hmaLabel?: string;
 }
 
 export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartProps> = ({
@@ -24,13 +26,38 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
   title,
   showHMA = true,
   fibLevels = {},
-  height = 500
+  height = 500,
+  timeframeLabel,
+  hmaLabel = 'HMA 50'
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const hmaSeriesRef = useRef<any>(null);
   const [localShowHMA, setLocalShowHMA] = useState(showHMA);
+  const toEpochSeconds = (value: number | string | undefined): number => {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) {
+        return Math.floor(parsed / 1000);
+      }
+    }
+    return 0;
+  };
+
+  const formatIST = (seconds: number) => {
+    const date = new Date(seconds * 1000);
+    return date.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  };
 
   useEffect(() => {
     if (!chartContainerRef.current || data.length === 0) return;
@@ -51,6 +78,10 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
         timeVisible: true,
         secondsVisible: false,
         borderColor: '#475569',
+        tickMarkFormatter: (time: number | string) => {
+          const seconds = typeof time === 'number' ? time : toEpochSeconds(time as any);
+          return formatIST(seconds);
+        },
       },
       rightPriceScale: {
         borderColor: '#475569',
@@ -58,12 +89,17 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
       crosshair: {
         mode: 1,
       },
+      localization: {
+        locale: 'en-IN',
+        timeFormatter: (time: number | string) => formatIST(typeof time === 'number' ? time : toEpochSeconds(time as any)),
+        dateFormat: 'dd MMM YY',
+      },
     });
 
     chartRef.current = chart;
 
-    // Add candlestick series
-    const candlestickSeries = (chart as any).addCandlestickSeries({
+    // Add candlestick series (v5 API)
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
       borderVisible: false,
@@ -72,35 +108,61 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
     });
     candlestickSeriesRef.current = candlestickSeries;
 
-    // Convert data to lightweight-charts format
-    const candlestickData: any[] = data.map(d => ({
-      time: (typeof d.time === 'number' ? d.time : d.timestamp || Math.floor(new Date(d.time).getTime() / 1000)) as any,
-      open: d.open,
-      high: d.high,
-      low: d.low,
-      close: d.close,
-    }));
+    // Convert data to lightweight-charts format and sort by time (ascending)
+    const candlestickData: any[] = data
+      .map(d => ({
+        time: (typeof d.time === 'number' ? d.time : (d.timestamp ? d.timestamp : toEpochSeconds(d.time))),
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+      }))
+      .sort((a, b) => a.time - b.time); // Sort ascending by time
+    
+    // Remove duplicates - keep only the last entry for each timestamp
+    const uniqueCandlestickData = candlestickData.reduce((acc, curr) => {
+      const lastItem = acc[acc.length - 1];
+      if (!lastItem || lastItem.time !== curr.time) {
+        acc.push(curr);
+      } else {
+        // Replace with current (keeping the last one for duplicate timestamps)
+        acc[acc.length - 1] = curr;
+      }
+      return acc;
+    }, [] as any[]);
 
-    candlestickSeries.setData(candlestickData);
+    candlestickSeries.setData(uniqueCandlestickData);
 
     // Add HMA line if enabled and data exists
     if (localShowHMA) {
       const hmaData = data
         .filter(d => d.hma != null)
         .map(d => ({
-          time: (typeof d.time === 'number' ? d.time : d.timestamp || Math.floor(new Date(d.time).getTime() / 1000)) as any,
+          time: (typeof d.time === 'number' ? d.time : (d.timestamp ? d.timestamp : toEpochSeconds(d.time))),
           value: d.hma!,
-        }));
+        }))
+        .sort((a, b) => a.time - b.time); // Sort ascending by time
+      
+      // Remove duplicates for HMA data as well
+      const uniqueHmaData = hmaData.reduce((acc, curr) => {
+        const lastItem = acc[acc.length - 1];
+        if (!lastItem || lastItem.time !== curr.time) {
+          acc.push(curr);
+        } else {
+          acc[acc.length - 1] = curr;
+        }
+        return acc;
+      }, [] as any[]);
 
-      if (hmaData.length > 0) {
-        const hmaSeries = (chart as any).addLineSeries({
+      if (uniqueHmaData.length > 0) {
+        const hmaSeries = chart.addSeries(LineSeries, {
           color: '#3b82f6',
           lineWidth: 2,
-          title: 'HMA 50',
+          title: hmaLabel,
           priceLineVisible: false,
         });
         hmaSeriesRef.current = hmaSeries;
-        hmaSeries.setData(hmaData);
+        hmaSeries.setData(uniqueHmaData);
       }
     }
 
@@ -150,42 +212,48 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
   };
 
   return (
-    <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
+    <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+      <div className="flex justify-between items-center mb-2">
+        <div>
+          <h3 className="text-base font-semibold">{title}</h3>
+          <p className="text-xs text-slate-400">
+            Times shown in IST (UTC+5:30)
+            {timeframeLabel ? ` • ${timeframeLabel}` : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
             <input
               type="checkbox"
               checked={localShowHMA}
               onChange={toggleHMA}
               className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-800"
             />
-            <span className="text-slate-300">HMA 50</span>
+            <span className="text-slate-300">{hmaLabel}</span>
           </label>
         </div>
       </div>
       
       <div ref={chartContainerRef} className="w-full" />
       
-      <div className="mt-3 flex items-center gap-4 text-sm flex-wrap">
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-green-500 rounded"></div>
+      <div className="mt-2 flex items-center gap-3 text-xs flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 bg-green-500 rounded"></div>
           <span className="text-slate-300">Bullish</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-red-500 rounded"></div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 bg-red-500 rounded"></div>
           <span className="text-slate-300">Bearish</span>
         </div>
         {localShowHMA && (
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-0.5 bg-blue-500"></div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-0.5 bg-blue-500"></div>
             <span className="text-slate-300">HMA 50</span>
           </div>
         )}
         {Object.keys(fibLevels).length > 0 && (
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-0.5 border-t border-dashed border-slate-400"></div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-0.5 border-t border-dashed border-slate-400"></div>
             <span className="text-slate-300">Fib Levels</span>
           </div>
         )}
