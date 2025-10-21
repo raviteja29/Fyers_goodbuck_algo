@@ -107,6 +107,11 @@ class ApiService {
   async getQuotes(symbols: string[]): Promise<QuotesResponse> {
     return this.request<QuotesResponse>(`/data/quotes`, { query: { symbols: symbols.join(',') } });
   }
+
+  // Analyze weekly options (range -> strikes -> effective expiry -> 30d series)
+  async analyzeWeekly(params: { from: string; to: string; expiry: string; resolution?: string }) {
+    return this.request<any>(`/data/analyze-weekly`, { query: params });
+  }
 }
 
 export const apiService = new ApiService();

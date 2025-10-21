@@ -21,6 +21,7 @@ export interface LiveData {
 
 interface CandlePoint {
   time: string; // localized string
+  timestamp: number; // epoch seconds
   open: number; high: number; low: number; close: number; idx: number;
 }
 
@@ -40,38 +41,25 @@ export const useLiveData = (config: LiveDataConfig) => {
     setData(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      // Calculate strikes based on previous week
-      const strikeData = await apiService.calculateStrikes(
-        config.rangeFrom,
-        config.rangeTo
-      );
-
-      setData(prev => ({
-        ...prev,
-        niftyRange: strikeData.weekRange,
-        strikes: strikeData.strikes
-      }));
-
-      // Fetch PE option data
+      // Get actual next expiry from option chain instead of calculating
+      // This avoids issues with holidays, weekends, or incorrect expiry day assumptions
       const resolution = config.resolution || '60';
-      const peChartData: OptionChartResponse = await apiService.getOptionChart(
-        strikeData.peSymbol,
-        resolution,
-        config.rangeFrom,
-        config.rangeTo
-      );
+      
+      // Use today's date as a reasonable default expiry for the analyze endpoint
+      // The backend will fetch the option chain and correct it to the nearest valid expiry
+      const todayExpiry = config.rangeTo; // Let backend correct this via option chain
+      
+      const analysis = await apiService.analyzeWeekly({
+        from: config.rangeFrom,
+        to: config.rangeTo,
+        expiry: todayExpiry, // Backend will suggest correct expiry from chain
+        resolution
+      });
 
-      // Fetch CE option data
-      const ceChartData: OptionChartResponse = await apiService.getOptionChart(
-        strikeData.ceSymbol,
-        resolution,
-        config.rangeFrom,
-        config.rangeTo
-      );
-
-      // Transform candle data to component format
+      // Transform helper
       const transformData = (candles: number[][]): CandlePoint[] => candles.map((candle, idx) => ({
         time: new Date(candle[0] * 1000).toLocaleString(),
+        timestamp: candle[0],
         open: candle[1],
         high: candle[2],
         low: candle[3],
@@ -79,10 +67,15 @@ export const useLiveData = (config: LiveDataConfig) => {
         idx
       }));
 
+      const peCandles = analysis?.series?.pe?.candles || [];
+      const ceCandles = analysis?.series?.ce?.candles || [];
+
       setData(prev => ({
         ...prev,
-        peData: peChartData.candles ? transformData(peChartData.candles) : null,
-        ceData: ceChartData.candles ? transformData(ceChartData.candles) : null,
+        niftyRange: analysis?.range ? { high: analysis.range.high, low: analysis.range.low } : null,
+        strikes: analysis?.strikes || null,
+        peData: peCandles.length ? transformData(peCandles) : null,
+        ceData: ceCandles.length ? transformData(ceCandles) : null,
         loading: false
       }));
 

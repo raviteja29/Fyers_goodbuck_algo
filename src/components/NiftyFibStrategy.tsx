@@ -2,89 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine, CartesianGrid } from 'recharts';
 import { TrendingUp, TrendingDown, Clock, GitCompare, RefreshCw } from 'lucide-react';
 import { useLiveData } from '../hooks/useLiveData';
-
-const CandlestickChart = ({ data, fibLevels, title }: any) => {
-  const yMin = Math.min(...data.map((d: any) => d.low)) - 20;
-  const yMax = Math.max(...data.map((d: any) => d.high)) + 20;
-  const yRange = yMax - yMin;
-  
-  return (
-    <div className="bg-slate-800 p-6 rounded-lg border border-slate-700">
-      <h3 className="text-lg font-semibold mb-4">{title}</h3>
-      <div className="relative" style={{ height: '450px' }}>
-        <svg width="100%" height="100%" viewBox="0 0 1000 450" preserveAspectRatio="xMidYMid meet">
-          {Object.entries(fibLevels).map(([level, price]: any) => {
-            const y = 400 - ((price - yMin) / yRange) * 380;
-            return (
-              <g key={level}>
-                <line x1="50" y1={y} x2="950" y2={y} stroke="#475569" strokeDasharray="3,3" strokeWidth="1"/>
-                <text x="960" y={y + 5} fill="#94a3b8" fontSize="12">{price.toFixed(0)}</text>
-              </g>
-            );
-          })}
-          
-          {data.map((candle: any, i: number) => {
-            const x = 50 + (i / data.length) * 900;
-            const wickTop = 400 - ((candle.high - yMin) / yRange) * 380;
-            const wickBottom = 400 - ((candle.low - yMin) / yRange) * 380;
-            const bodyTop = 400 - ((Math.max(candle.open, candle.close) - yMin) / yRange) * 380;
-            const bodyBottom = 400 - ((Math.min(candle.open, candle.close) - yMin) / yRange) * 380;
-            const isGreen = candle.close >= candle.open;
-            const candleWidth = Math.max(3, 900 / data.length - 2);
-            
-            return (
-              <g key={i}>
-                <line x1={x} y1={wickTop} x2={x} y2={wickBottom} stroke={isGreen ? '#22c55e' : '#ef4444'} strokeWidth="1.5"/>
-                <rect 
-                  x={x - candleWidth/2} 
-                  y={bodyTop} 
-                  width={candleWidth} 
-                  height={Math.max(bodyBottom - bodyTop, 1)} 
-                  fill={isGreen ? '#22c55e' : '#ef4444'}
-                  opacity="0.8"
-                />
-              </g>
-            );
-          })}
-          
-          {data.some((d: any) => d.hma != null) && (
-            <polyline
-              points={data
-                .map((d: any, i: number) => {
-                  if (d.hma == null) return null;
-                  const x = 50 + (i / data.length) * 900;
-                  const y = 400 - ((d.hma - yMin) / yRange) * 380;
-                  return x + ',' + y;
-                })
-                .filter((p: any) => p !== null)
-                .join(' ')}
-              fill="none"
-              stroke="#3b82f6"
-              strokeWidth="2"
-            />
-          )}
-          
-          <text x="500" y="440" fill="#94a3b8" fontSize="12" textAnchor="middle">Time</text>
-          <text x="20" y="225" fill="#94a3b8" fontSize="12" textAnchor="middle" transform="rotate(-90 20 225)">Price</text>
-        </svg>
-      </div>
-      <div className="mt-2 flex items-center gap-4 text-sm">
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-green-500"></div>
-          <span>Bullish</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-red-500"></div>
-          <span>Bearish</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-0.5 bg-blue-500"></div>
-          <span>HMA 50</span>
-        </div>
-      </div>
-    </div>
-  );
-};
+import { LightweightCandlestickChart } from './LightweightCandlestickChart';
 
 interface NiftyFibStrategyProps {
   isAuthenticated: boolean;
@@ -95,14 +13,20 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
   const [timeframe, setTimeframe] = useState('60');
   
   // Date range for historical data - 3 months back
-  const [dateRange] = useState({
-    from: '2025-07-01',  // 3 months of data for HMA 50
-    to: '2025-10-07'
+  const [dateRange] = useState(() => {
+    const today = new Date();
+    const threeMonthsAgo = new Date(today);
+    threeMonthsAgo.setMonth(today.getMonth() - 3);
+    return {
+      from: threeMonthsAgo.toISOString().split('T')[0],
+      to: today.toISOString().split('T')[0]
+    };
   });
 
-  // Fetch live data from Fyers API
+  // Fetch live data from Fyers API - DISABLED auto-load on login
+  // Data will only load when user manually triggers it
   const { niftyRange, strikes, peData, ceData, loading, error, refetch } = useLiveData({
-    enabled: isAuthenticated,
+    enabled: false, // Changed from isAuthenticated to false - no auto-load
     rangeFrom: dateRange.from,
     rangeTo: dateRange.to,
     refreshInterval: 60000  // Refresh every minute
@@ -136,8 +60,8 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
   }, [ceData]);
 
   // Calculate Fibonacci levels
-  const peFibLevels = useMemo(() => {
-    if (!processedPeData) return {};
+  const peFibLevels = useMemo((): Record<string, number> => {
+    if (!processedPeData || processedPeData.length === 0) return {};
     const highs = processedPeData.map(d => d.high);
     const lows = processedPeData.map(d => d.low);
     const high = Math.max(...highs);
@@ -152,8 +76,8 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
     };
   }, [processedPeData]);
 
-  const ceFibLevels = useMemo(() => {
-    if (!processedCeData) return {};
+  const ceFibLevels = useMemo((): Record<string, number> => {
+    if (!processedCeData || processedCeData.length === 0) return {};
     const highs = processedCeData.map(d => d.high);
     const lows = processedCeData.map(d => d.low);
     const high = Math.max(...highs);
@@ -272,6 +196,17 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
         </div>
       </div>
 
+      <div className="mb-4">
+        <button
+          onClick={refetch}
+          disabled={!isAuthenticated || loading}
+          className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-600 text-white rounded-lg font-medium transition-colors"
+        >
+          {loading ? 'Loading...' : 'Load Data'}
+        </button>
+        {!isAuthenticated && <span className="ml-3 text-amber-400 text-sm">Login first to load data</span>}
+      </div>
+
       <div className="flex gap-2 mb-4 flex-wrap">
         <button
           onClick={() => setSelectedView('pe_chart')}
@@ -306,11 +241,13 @@ const NiftyFibStrategy: React.FC<NiftyFibStrategyProps> = ({ isAuthenticated }) 
         </button>
       </div>
 
-      {(selectedView === 'pe_chart' || selectedView === 'ce_chart') && getCurrentData() && (
-        <CandlestickChart 
-          data={getCurrentData()} 
+      {(selectedView === 'pe_chart' || selectedView === 'ce_chart') && getCurrentData() && getCurrentData()!.length > 0 && (
+        <LightweightCandlestickChart 
+          data={getCurrentData()!} 
           fibLevels={getCurrentFib()} 
-          title={`${selectedView === 'pe_chart' ? `${strikes?.pe} PE` : `${strikes?.ce} CE`} - Live Data with HMA 50`}
+          title={`${selectedView === 'pe_chart' ? `${strikes?.pe} PE` : `${strikes?.ce} CE`} - Live Data`}
+          showHMA={true}
+          height={500}
         />
       )}
 

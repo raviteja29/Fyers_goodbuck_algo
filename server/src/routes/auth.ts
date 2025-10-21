@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
-import { fyersService } from '../services/fyersService.js';
-import { tokenStore } from '../services/tokenStore.js';
+import { fyersService } from '../services/fyersService';
+import { tokenStore } from '../services/tokenStore';
 
 export const fyersAuthRouter = express.Router();
 

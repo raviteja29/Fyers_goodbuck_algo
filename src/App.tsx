@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import NiftyFibStrategy from './components/NiftyFibStrategy';
 import { FyersLogin } from './components/FyersLogin';
+import WeeklyOptionAnalyzer from './components/WeeklyOptionAnalyzer';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -12,6 +13,9 @@ function App() {
 
       {/* Strategy / Data Visualizations */}
       <NiftyFibStrategy isAuthenticated={isAuthenticated} />
+
+  {/* Weekly Option Analyzer */}
+  <WeeklyOptionAnalyzer isAuthenticated={isAuthenticated} />
 
       {/* Host mismatch helper */}
       {window.location.hostname === 'localhost' && (
