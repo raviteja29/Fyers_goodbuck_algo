@@ -14,6 +14,7 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
   const prevResolutionRef = useRef(resolution);
 
   const disabled = !isAuthenticated || !from || !to || !expiry || loading;
+  const HMA_PERIOD = 50;
 
   const resolutionLabel = (value: string) => {
     if (value === '60') return '1 Hour';
@@ -24,8 +25,13 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
     return `${value} Min`;
   };
 
+  const formatPrice = (value?: number | null) => {
+    if (value === undefined || value === null) return '--';
+    return value.toFixed(2);
+  };
+
   // Calculate HMA 50
-  const calculateHMA = (data: any[], period = 50) => {
+  const calculateHMA = (data: any[], period = HMA_PERIOD) => {
     const result = [];
     for (let i = 0; i < data.length; i++) {
       if (i < period - 1) {
@@ -42,7 +48,8 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
   // Convert raw candles to chart format with HMA and IST timezone
   const processedPeData = useMemo(() => {
     if (!result?.series?.pe?.candles) return null;
-    const candles = result.series.pe.candles.map((c: any) => ({
+    const sorted = [...result.series.pe.candles].sort((a: any, b: any) => a[0] - b[0]);
+    const candles = sorted.map((c: any) => ({
       time: c[0],
       timestamp: c[0],
       open: c[1],
@@ -56,7 +63,8 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
 
   const processedCeData = useMemo(() => {
     if (!result?.series?.ce?.candles) return null;
-    const candles = result.series.ce.candles.map((c: any) => ({
+    const sorted = [...result.series.ce.candles].sort((a: any, b: any) => a[0] - b[0]);
+    const candles = sorted.map((c: any) => ({
       time: c[0],
       timestamp: c[0],
       open: c[1],
@@ -213,6 +221,22 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
                     <span className="text-blue-400">PE: {result?.series?.pe?.candles?.length || 0}</span>
                     <span className="text-slate-500 mx-1">|</span>
                     <span className="text-emerald-400">CE: {result?.series?.ce?.candles?.length || 0}</span>
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 font-medium">PE High / Low:</span>
+                  <span className="font-semibold">
+                    <span className="text-emerald-400">{formatPrice(result?.optionRange?.pe?.high)}</span>
+                    <span className="text-slate-500 mx-1">/</span>
+                    <span className="text-rose-400">{formatPrice(result?.optionRange?.pe?.low)}</span>
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 font-medium">CE High / Low:</span>
+                  <span className="font-semibold">
+                    <span className="text-emerald-400">{formatPrice(result?.optionRange?.ce?.high)}</span>
+                    <span className="text-slate-500 mx-1">/</span>
+                    <span className="text-rose-400">{formatPrice(result?.optionRange?.ce?.low)}</span>
                   </span>
                 </div>
               </div>

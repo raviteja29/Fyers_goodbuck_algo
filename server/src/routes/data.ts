@@ -233,12 +233,47 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
       fetchWithRetry(ceSymbol, 'CE')
     ]);
 
+    // Compute strike highs/lows within the requested analysis window (IST boundaries)
+    const parseIstEpoch = (date: string, endOfDay = false) => {
+      const base = new Date(`${date}T00:00:00+05:30`);
+      if (endOfDay) {
+        base.setHours(23, 59, 59, 999);
+      }
+      return Math.floor(base.getTime() / 1000);
+    };
+
+  const optionFromEpoch = parseIstEpoch(from);
+  const optionToEpoch = parseIstEpoch(to, true);
+
+    const computeRangeStats = (series: any) => {
+      const candles: number[][] = series?.candles ?? [];
+      if (!Array.isArray(candles) || candles.length === 0) {
+        return { high: null, low: null };
+      }
+  const filtered = candles.filter((c: number[]) => c[0] >= optionFromEpoch && c[0] <= optionToEpoch);
+      if (!filtered.length) {
+        return { high: null, low: null };
+      }
+      const highs = filtered.map(c => c[2]);
+      const lows = filtered.map(c => c[3]);
+      return {
+        high: Math.max(...highs),
+        low: Math.min(...lows),
+      };
+    };
+
+    const optionRange = {
+      pe: computeRangeStats(peData),
+      ce: computeRangeStats(ceData),
+    };
+
     return res.json({
       inputs: { from, to, expiry, effectiveExpiry: eff, resolution },
       range: { high, low },
       strikes: { pe: peStrike, ce: ceStrike },
       symbols: { pe: peSymbol, ce: ceSymbol },
       dataWindow: { from: rangeFrom, to: rangeTo, days: daysDiff },
+      optionRange,
       series: { pe: peData, ce: ceData }
     });
   } catch (error: any) {
