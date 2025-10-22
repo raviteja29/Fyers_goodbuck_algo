@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import {
+  createChart,
+  ColorType,
+  CandlestickSeries,
+  LineSeries,
+  createSeriesMarkers,
+} from 'lightweight-charts';
 
 interface CandleData {
   time: number | string;
@@ -19,6 +25,19 @@ interface LightweightCandlestickChartProps {
   height?: number;
   timeframeLabel?: string;
   hmaLabel?: string;
+  staticLines?: {
+    price: number;
+    color?: string;
+    title?: string;
+    lineStyle?: number;
+  }[];
+  markers?: {
+    time: number;
+    color: string;
+    position?: 'aboveBar' | 'belowBar';
+    shape?: 'arrowUp' | 'arrowDown';
+    text?: string;
+  }[];
 }
 
 export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartProps> = ({
@@ -28,14 +47,20 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
   fibLevels = {},
   height = 500,
   timeframeLabel,
-  hmaLabel = 'HMA 50'
+  hmaLabel = 'HMA 50',
+  staticLines = [],
+  markers = [],
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const hmaSeriesRef = useRef<any>(null);
+  const toolTipRef = useRef<HTMLDivElement | null>(null);
+  const markersPluginRef = useRef<any>(null);
   const [localShowHMA, setLocalShowHMA] = useState(showHMA);
-  const toEpochSeconds = (value: number | string | undefined): number => {
+  const toEpochSeconds = (
+    value: number | string | { year: number; month: number; day: number } | undefined,
+  ): number => {
     if (typeof value === 'number') return value;
     if (typeof value === 'string') {
       const parsed = Date.parse(value);
@@ -43,26 +68,48 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
         return Math.floor(parsed / 1000);
       }
     }
+    if (
+      value &&
+      typeof value === 'object' &&
+      'year' in value &&
+      'month' in value &&
+      'day' in value
+    ) {
+      const date = new Date(Date.UTC(value.year, value.month - 1, value.day));
+      return Math.floor(date.getTime() / 1000);
+    }
     return 0;
   };
 
-  const formatIST = (seconds: number) => {
+  const formatISTDate = (seconds: number) => {
     const date = new Date(seconds * 1000);
-    return date.toLocaleString('en-IN', {
+    return date.toLocaleDateString('en-IN', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric',
       day: '2-digit',
       month: 'short',
+    });
+  };
+
+  const formatISTTime = (seconds: number) => {
+    const date = new Date(seconds * 1000);
+    return date.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
     });
   };
 
+  const formatISTDateTime = (seconds: number) => `${formatISTDate(seconds)} • ${formatISTTime(seconds)}`;
+
   useEffect(() => {
     if (!chartContainerRef.current || data.length === 0) return;
 
     // Create chart
+    const container = chartContainerRef.current;
+    container.style.position = 'relative';
+
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: '#1e293b' },
@@ -80,7 +127,7 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
         borderColor: '#475569',
         tickMarkFormatter: (time: number | string) => {
           const seconds = typeof time === 'number' ? time : toEpochSeconds(time as any);
-          return formatIST(seconds);
+          return formatISTDate(seconds);
         },
       },
       rightPriceScale: {
@@ -91,7 +138,7 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
       },
       localization: {
         locale: 'en-IN',
-        timeFormatter: (time: number | string) => formatIST(typeof time === 'number' ? time : toEpochSeconds(time as any)),
+        timeFormatter: (time: number | string) => formatISTDate(typeof time === 'number' ? time : toEpochSeconds(time as any)),
         dateFormat: 'dd MMM YY',
       },
     });
@@ -134,6 +181,8 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
     candlestickSeries.setData(uniqueCandlestickData);
 
     // Add HMA line if enabled and data exists
+    let uniqueHmaData: { time: number; value: number }[] = [];
+
     if (localShowHMA) {
       const hmaData = data
         .filter(d => d.hma != null)
@@ -144,7 +193,7 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
         .sort((a, b) => a.time - b.time); // Sort ascending by time
       
       // Remove duplicates for HMA data as well
-      const uniqueHmaData = hmaData.reduce((acc, curr) => {
+      uniqueHmaData = hmaData.reduce((acc, curr) => {
         const lastItem = acc[acc.length - 1];
         if (!lastItem || lastItem.time !== curr.time) {
           acc.push(curr);
@@ -152,7 +201,7 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
           acc[acc.length - 1] = curr;
         }
         return acc;
-      }, [] as any[]);
+      }, [] as { time: number; value: number }[]);
 
       if (uniqueHmaData.length > 0) {
         const hmaSeries = chart.addSeries(LineSeries, {
@@ -162,9 +211,108 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
           priceLineVisible: false,
         });
         hmaSeriesRef.current = hmaSeries;
-        hmaSeries.setData(uniqueHmaData);
+        hmaSeries.setData(uniqueHmaData as any);
+      } else {
+        hmaSeriesRef.current = null;
       }
+    } else {
+      hmaSeriesRef.current = null;
     }
+
+    const toolTip = document.createElement('div');
+    toolTipRef.current = toolTip;
+    toolTip.style.position = 'absolute';
+    toolTip.style.left = '12px';
+    toolTip.style.top = '12px';
+    toolTip.style.padding = '8px 12px';
+    toolTip.style.borderRadius = '8px';
+    toolTip.style.backgroundColor = 'rgba(15, 23, 42, 0.9)';
+    toolTip.style.color = '#e2e8f0';
+    toolTip.style.pointerEvents = 'none';
+    toolTip.style.fontSize = '12px';
+    toolTip.style.lineHeight = '1.4';
+    toolTip.style.fontFamily = 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    toolTip.style.boxShadow = '0 4px 12px rgba(15, 23, 42, 0.35)';
+    toolTip.style.zIndex = '2';
+    toolTip.innerHTML = '';
+    container.appendChild(toolTip);
+
+    const formatNumber = (value: number | null | undefined) => {
+      if (value === null || value === undefined || Number.isNaN(value)) return '—';
+      return value.toFixed(2);
+    };
+
+    const lastCandle = uniqueCandlestickData[uniqueCandlestickData.length - 1];
+    const lastHmaValue = localShowHMA && uniqueHmaData.length > 0
+      ? uniqueHmaData[uniqueHmaData.length - 1].value
+      : null;
+
+    const setTooltipContent = (
+      timeSeconds: number,
+      ohlc: { open: number; high: number; low: number; close: number } | null,
+      hmaValue?: number | null,
+    ) => {
+      if (!toolTipRef.current) return;
+      if (!ohlc) {
+        toolTipRef.current.innerHTML = '<div>No data</div>';
+        return;
+      }
+
+      const dateTime = formatISTDateTime(timeSeconds);
+      const lines = [
+        `<div style="font-weight:600; margin-bottom:4px;">${dateTime}</div>`,
+        `<div>O: ${formatNumber(ohlc.open)} H: ${formatNumber(ohlc.high)}</div>`,
+        `<div>L: ${formatNumber(ohlc.low)} C: ${formatNumber(ohlc.close)}</div>`,
+      ];
+
+      if (localShowHMA) {
+        lines.push(`<div>${hmaLabel}: ${formatNumber(hmaValue)}</div>`);
+      }
+
+      toolTipRef.current.innerHTML = lines.join('');
+    };
+
+    if (lastCandle) {
+      setTooltipContent(lastCandle.time, lastCandle, lastHmaValue);
+    }
+
+    const crosshairHandler = (param: any) => {
+      if (!toolTipRef.current || !container || !lastCandle) return;
+
+      const point = param.point;
+      if (
+        !param.time ||
+        !point ||
+        point.x < 0 ||
+        point.x > container.clientWidth ||
+        point.y < 0 ||
+        point.y > container.clientHeight
+      ) {
+        setTooltipContent(lastCandle.time, lastCandle, lastHmaValue);
+        return;
+      }
+
+      const candleSeries = candlestickSeriesRef.current;
+      const ohlc = candleSeries ? param.seriesData?.get(candleSeries) ?? null : null;
+      if (!ohlc) {
+        setTooltipContent(lastCandle.time, lastCandle, lastHmaValue);
+        return;
+      }
+
+      const resolvedTime = toEpochSeconds(param.time as any);
+
+      let hmaValue: number | null = null;
+      if (localShowHMA && hmaSeriesRef.current) {
+        const hmaPoint = param.seriesData?.get(hmaSeriesRef.current);
+        if (hmaPoint && typeof hmaPoint.value === 'number') {
+          hmaValue = hmaPoint.value;
+        }
+      }
+
+      setTooltipContent(resolvedTime, ohlc, hmaValue);
+    };
+
+    chart.subscribeCrosshairMove(crosshairHandler);
 
     // Add Fibonacci levels as price lines
     Object.entries(fibLevels).forEach(([level, price]) => {
@@ -186,6 +334,37 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
       });
     });
 
+    if (staticLines.length > 0) {
+      staticLines.forEach(line => {
+        candlestickSeries.createPriceLine({
+          price: line.price,
+          color: line.color || '#f97316',
+          lineWidth: 1,
+          lineStyle: line.lineStyle ?? 0,
+          axisLabelVisible: true,
+          title: line.title,
+        });
+      });
+    }
+
+    if (markersPluginRef.current) {
+      markersPluginRef.current.detach();
+      markersPluginRef.current = null;
+    }
+
+    if (markers.length > 0) {
+      markersPluginRef.current = createSeriesMarkers(
+        candlestickSeries,
+        markers.map(marker => ({
+          time: marker.time,
+          position: marker.position ?? 'belowBar',
+          color: marker.color,
+          shape: marker.shape ?? 'arrowUp',
+          text: marker.text,
+        })) as any,
+      );
+    }
+
     // Fit content
     chart.timeScale().fitContent();
 
@@ -203,9 +382,26 @@ export const LightweightCandlestickChart: React.FC<LightweightCandlestickChartPr
     // Cleanup
     return () => {
       window.removeEventListener('resize', handleResize);
+      chart.unsubscribeCrosshairMove(crosshairHandler);
+      if (toolTipRef.current && container.contains(toolTipRef.current)) {
+        container.removeChild(toolTipRef.current);
+        toolTipRef.current = null;
+      }
+      if (markersPluginRef.current) {
+        markersPluginRef.current.detach();
+        markersPluginRef.current = null;
+      }
       chart.remove();
     };
-  }, [data, localShowHMA, fibLevels, height]);
+  }, [
+    data,
+    localShowHMA,
+    fibLevels,
+    height,
+    hmaLabel,
+    staticLines,
+    markers,
+  ]);
 
   const toggleHMA = () => {
     setLocalShowHMA(!localShowHMA);

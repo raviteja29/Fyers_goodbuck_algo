@@ -32,17 +32,104 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
 
   // Calculate HMA 50
   const calculateHMA = (data: any[], period = HMA_PERIOD) => {
-    const result = [];
-    for (let i = 0; i < data.length; i++) {
-      if (i < period - 1) {
-        result.push(null);
-      } else {
-        const prices = data.slice(i - period + 1, i + 1).map(d => d.close);
-        const sum = prices.reduce((a, b) => a + b, 0);
-        result.push(sum / prices.length);
+    if (!data.length || period <= 0) return [];
+
+    const typicalPrices = data.map((c) => (c.high + c.low + c.close) / 3);
+
+    const weightedMovingAverage = (series: (number | null)[], length: number) => {
+      const result = Array(series.length).fill(null) as (number | null)[];
+      if (length <= 0) return result;
+      const weightSum = (length * (length + 1)) / 2;
+
+      for (let i = length - 1; i < series.length; i++) {
+        let acc = 0;
+        let valid = true;
+        for (let j = 0; j < length; j++) {
+          const value = series[i - j];
+          if (value === null || value === undefined) {
+            valid = false;
+            break;
+          }
+          acc += value * (length - j);
+        }
+        result[i] = valid ? acc / weightSum : null;
       }
+
+      return result;
+    };
+
+    const halfLength = Math.max(1, Math.round(period / 2));
+    const sqrtLength = Math.max(1, Math.round(Math.sqrt(period)));
+
+    const wmaHalf = weightedMovingAverage(typicalPrices, halfLength);
+    const wmaFull = weightedMovingAverage(typicalPrices, period);
+
+    const diffSeries = typicalPrices.map((_, idx) => {
+      const shortVal = wmaHalf[idx];
+      const longVal = wmaFull[idx];
+      if (shortVal === null || shortVal === undefined || longVal === null || longVal === undefined) {
+        return null;
+      }
+      return 2 * shortVal - longVal;
+    });
+
+    const hma = weightedMovingAverage(diffSeries, sqrtLength);
+    return hma;
+  };
+
+  const computeMarkers = (series: any[] | null | undefined) => {
+    if (!series || series.length === 0) return [] as {
+      time: number;
+      color: string;
+      position?: 'aboveBar' | 'belowBar';
+      shape?: 'arrowUp' | 'arrowDown';
+      text?: string;
+    }[];
+
+    const markers: {
+      time: number;
+      color: string;
+      position?: 'aboveBar' | 'belowBar';
+      shape?: 'arrowUp' | 'arrowDown';
+      text?: string;
+    }[] = [];
+
+    let prevSlope: number | null = null;
+
+    for (let i = 1; i < series.length; i++) {
+      const curr = series[i];
+      const prev = series[i - 1];
+      if (!curr || !prev) continue;
+      if (curr.hma == null || prev.hma == null) continue;
+
+      const currSlope = curr.hma - prev.hma;
+      if (prevSlope === null) {
+        prevSlope = currSlope;
+        continue;
+      }
+
+      if (currSlope > 0 && prevSlope <= 0) {
+        markers.push({
+          time: typeof curr.time === 'number' ? curr.time : curr.timestamp,
+          color: '#22c55e',
+          position: 'belowBar',
+          shape: 'arrowUp',
+          text: 'HMA↑',
+        });
+      } else if (currSlope < 0 && prevSlope >= 0) {
+        markers.push({
+          time: typeof curr.time === 'number' ? curr.time : curr.timestamp,
+          color: '#ef4444',
+          position: 'aboveBar',
+          shape: 'arrowDown',
+          text: 'HMA↓',
+        });
+      }
+
+      prevSlope = currSlope;
     }
-    return result;
+
+    return markers;
   };
 
   // Convert raw candles to chart format with HMA and IST timezone
@@ -75,6 +162,53 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
     const hma = calculateHMA(candles, 50);
     return candles.map((c: any, i: number) => ({ ...c, hma: hma[i] }));
   }, [result]);
+
+  const peLines = useMemo(() => {
+    const peRange = result?.optionRange?.pe;
+    if (!peRange) return [];
+    const lines = [] as {
+      price: number;
+      color?: string;
+      title?: string;
+      lineStyle?: number;
+    }[];
+    if (typeof peRange.high === 'number') {
+      lines.push({ price: peRange.high, color: '#22c55e', title: 'PE High' });
+    }
+    if (typeof peRange.low === 'number') {
+      lines.push({ price: peRange.low, color: '#ef4444', title: 'PE Low' });
+    }
+    if (typeof peRange.high === 'number' && typeof peRange.low === 'number') {
+      const mid = (peRange.high + peRange.low) / 2;
+      lines.push({ price: mid, color: '#0ea5e9', title: 'PE Mid', lineStyle: 2 });
+    }
+    return lines;
+  }, [result]);
+
+  const ceLines = useMemo(() => {
+    const ceRange = result?.optionRange?.ce;
+    if (!ceRange) return [];
+    const lines = [] as {
+      price: number;
+      color?: string;
+      title?: string;
+      lineStyle?: number;
+    }[];
+    if (typeof ceRange.high === 'number') {
+      lines.push({ price: ceRange.high, color: '#22c55e', title: 'CE High' });
+    }
+    if (typeof ceRange.low === 'number') {
+      lines.push({ price: ceRange.low, color: '#ef4444', title: 'CE Low' });
+    }
+    if (typeof ceRange.high === 'number' && typeof ceRange.low === 'number') {
+      const mid = (ceRange.high + ceRange.low) / 2;
+      lines.push({ price: mid, color: '#0ea5e9', title: 'CE Mid', lineStyle: 2 });
+    }
+    return lines;
+  }, [result]);
+
+  const peMarkers = useMemo(() => computeMarkers(processedPeData), [processedPeData]);
+  const ceMarkers = useMemo(() => computeMarkers(processedCeData), [processedCeData]);
 
   const runAnalysis = useCallback(async () => {
     if (!isAuthenticated || !from || !to || !expiry) return;
@@ -266,6 +400,8 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
                 hmaLabel={`HMA 50 (${resolutionLabel(resolution)})`}
                 showHMA={true}
                 height={450}
+                staticLines={peLines}
+                markers={peMarkers}
               />
             )}
 
@@ -277,6 +413,8 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
                 hmaLabel={`HMA 50 (${resolutionLabel(resolution)})`}
                 showHMA={true}
                 height={450}
+                staticLines={ceLines}
+                markers={ceMarkers}
               />
             )}
           </div>
