@@ -11,9 +11,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true,
-    "declaration": true,
-    "types": ["vite/client"],
+  "allowSyntheticDefaultImports": true,
+  "declaration": true,
     "jsx": "react-jsx"
   },
   "include": ["src/**/*"],
