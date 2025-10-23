@@ -38,7 +38,7 @@ export const useLiveData = (config: LiveDataConfig) => {
   const fetchData = useCallback(async () => {
     if (!config.enabled) return;
 
-    setData(prev => ({ ...prev, loading: true, error: null }));
+  setData((prev: LiveData) => ({ ...prev, loading: true, error: null }));
 
     try {
       // Get actual next expiry from option chain instead of calculating
@@ -83,7 +83,7 @@ export const useLiveData = (config: LiveDataConfig) => {
       const peCandles = analysis?.series?.pe?.candles || [];
       const ceCandles = analysis?.series?.ce?.candles || [];
 
-      setData(prev => ({
+      setData((prev: LiveData) => ({
         ...prev,
         niftyRange: analysis?.range ? { high: analysis.range.high, low: analysis.range.low } : null,
         strikes: analysis?.strikes || null,
@@ -93,7 +93,7 @@ export const useLiveData = (config: LiveDataConfig) => {
       }));
 
     } catch (error: any) {
-      setData(prev => ({
+      setData((prev: LiveData) => ({
         ...prev,
         loading: false,
         error: error.message
