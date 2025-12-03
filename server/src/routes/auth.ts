@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
-import { fyersService } from '../services/fyersService';
-import { tokenStore } from '../services/tokenStore';
+import { fyersService } from '../services/fyersService.js';
+import { tokenStore } from '../services/tokenStore.js';
 
 export const fyersAuthRouter = express.Router();
 
@@ -93,11 +93,32 @@ fyersAuthRouter.get('/status', async (req: Request, res: Response) => {
     }
 
     fyersService.setAccessToken(accessToken);
-    const profile = await fyersService.getProfile();
-
+    // Add a timeout to the profile fetch (5 seconds)
+    const fetchProfileWithTimeout = () => {
+      return new Promise<any>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Fyers profile fetch timed out')), 5000);
+        fyersService.getProfile()
+          .then((profile: any) => {
+            clearTimeout(timer);
+            resolve(profile);
+          })
+          .catch((err: any) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+      });
+    };
+    let profile;
+    try {
+      profile = await fetchProfileWithTimeout();
+    } catch (err: any) {
+      req.session.accessToken = undefined;
+      tokenStore.delete(req.sessionID);
+      return res.json({ authenticated: false, error: err.message });
+    }
     res.json({ 
       authenticated: true,
-      profile: profile.data 
+      profile: (profile as any).data 
     });
   } catch (error: any) {
     // Token might be expired
