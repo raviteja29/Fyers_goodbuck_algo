@@ -12,4 +12,9 @@ export default defineConfig({
     strictPort: true,  // fail instead of auto-increment so backend redirect stays correct
     cors: true
   }
+  ,
+  preview: {
+    // allow the Render host so the Vite preview won't be blocked
+    allowedHosts: ["fyers-goodbuck-algo.onrender.com"]
+  }
 })
