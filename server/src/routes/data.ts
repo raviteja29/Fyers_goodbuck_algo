@@ -1,76 +1,28 @@
-import express, { Request, Response } from 'express';
-import { fyersService } from '../services/fyersService.js';
-import { requireAuth } from '../middleware/requireAuth.js';
-import { parseOptionSymbol, buildWeeklyOptionSymbol, buildMonthlyOptionSymbol, weekMonthCodeMap } from '../services/symbolUtils.js';
-
-export const fyersDataRouter = express.Router();
-
-// Authentication handled by shared middleware
-
-// Get NIFTY index data for a date range
-fyersDataRouter.get('/nifty-range', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const { rangeFrom, rangeTo } = req.query;
-
-    if (!rangeFrom || !rangeTo) {
-      return res.status(400).json({ error: 'rangeFrom and rangeTo are required' });
-    }
-    // Convert to epoch seconds if needed (Fyers expects epoch when date_format=0)
-    const { fromEpoch, toEpoch } = normalizeDateRange(rangeFrom as string, rangeTo as string);
-    const data = await fyersService.getChartData({
-      symbol: 'NSE:NIFTY50-INDEX',
-      resolution: 'D',
-      rangeFrom: String(fromEpoch),
-      rangeTo: String(toEpoch),
-      dateFormat: '0'
-    });
-
-    // Calculate high and low
-    if (data.s === 'ok' && data.candles) {
-      const highs = data.candles.map((c: number[]) => c[2]);
-      const lows = data.candles.map((c: number[]) => c[3]);
-      const high = Math.max(...highs);
-      const low = Math.min(...lows);
-
-      res.json({
-        success: true,
-        high,
-        low,
-        rawData: data
-      });
-    } else {
-      console.warn('[nifty-range] No data returned', { rangeFrom, rangeTo, status: data.s, keys: Object.keys(data || {}) });
-      res.status(400).json({ error: 'No data available' });
-    }
-  } catch (error: any) {
-    console.error('[nifty-range] Error', { message: error.message, stack: error.stack });
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Analyze weekly options: suggest effective expiry, build PE/CE, fetch 30-day series up to expiry
-// Query: from (YYYY-MM-DD), to (YYYY-MM-DD), expiry (YYYY-MM-DD), resolution (default 15)
-fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const { from, to, expiry, resolution = '15' } = req.query as Record<string, string>;
-    if (!from || !to || !expiry) {
-      return res.status(400).json({ error: 'from, to, and expiry are required (YYYY-MM-DD)' });
-    }
-
-    // 1) Get NIFTY high/low on the user range (daily)
+// Data routes will be implemented for Kite API integration
     // Use start-of-day for both from and to to get exact days only
+    // Accept instrument param (default NIFTY)
+    const instrument = req.body?.instrument || req.query?.instrument || 'NIFTY';
+    // Map instrument to symbol and underlying
+    const instrumentMap = {
+      NIFTY: { symbol: 'NSE:NIFTY50-INDEX', underlying: 'NIFTY' },
+      BANKNIFTY: { symbol: 'NSE:NIFTYBANK-INDEX', underlying: 'BANKNIFTY' },
+      FINNIFTY: { symbol: 'NSE:FINNIFTY-INDEX', underlying: 'FINNIFTY' },
+      'GIFT NIFTY': { symbol: 'NSE:GIFTNIFTY-INDEX', underlying: 'GIFTNIFTY' },
+      GIFTNIFTY: { symbol: 'NSE:GIFTNIFTY-INDEX', underlying: 'GIFTNIFTY' },
+    };
+    const { symbol: indexSymbol, underlying } = instrumentMap[instrument.toUpperCase()] || instrumentMap['NIFTY'];
     const fromEpoch = Math.floor(Date.parse(from + 'T00:00:00Z') / 1000);
     const toEpoch = Math.floor(Date.parse(to + 'T00:00:00Z') / 1000);
-    console.log('[analyze-weekly] NIFTY range query:', { from, to, fromEpoch, toEpoch });
+    console.log(`[analyze-weekly] ${instrument} range query:`, { from, to, fromEpoch, toEpoch });
     const idx = await fyersService.getChartData({
-      symbol: 'NSE:NIFTY50-INDEX',
+      symbol: indexSymbol,
       resolution: 'D',
       rangeFrom: String(fromEpoch),
       rangeTo: String(toEpoch),
       dateFormat: '0'
     });
-    console.log('[analyze-weekly] NIFTY candles received:', idx?.candles?.length, 'candles');
-    if (!(idx?.candles?.length)) return res.status(400).json({ error: 'No NIFTY data in range' });
+    console.log(`[analyze-weekly] ${instrument} candles received:`, idx?.candles?.length, 'candles');
+    if (!(idx?.candles?.length)) return res.status(400).json({ error: `No ${instrument} data in range` });
     
     // Log the dates of candles received to debug range issues
     const candleDates = idx.candles.map((c: number[]) => new Date(c[0] * 1000).toISOString().split('T')[0]);
@@ -90,9 +42,9 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
     const ceStrike = Math.floor(low / 50) * 50;
 
     // 2) Option chain expiries to suggest effective expiry
-    const chain = await fyersService.getOptionChain({ symbol: 'NSE:NIFTY50-INDEX' });
-    console.log('[analyze-weekly] Raw chain response keys:', Object.keys(chain || {}));
-    console.log('[analyze-weekly] Chain data keys:', Object.keys(chain?.data || {}));
+  const chain = await fyersService.getOptionChain({ symbol: indexSymbol });
+  console.log(`[analyze-weekly] Raw chain response keys:`, Object.keys(chain || {}));
+  console.log(`[analyze-weekly] Chain data keys:`, Object.keys(chain?.data || {}));
     
     // Extract expiries from the expiryData field
     let expiries: string[] = [];
@@ -138,24 +90,23 @@ fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Re
 
     let peSymbol: string;
     let ceSymbol: string;
-
     // If the effective expiry falls on the last Tuesday of the month, treat it as a monthly expiry
     if (isLastTuesday(effDate)) {
       console.log('[analyze-weekly] Effective expiry is last Tuesday of month -> using monthly option symbol format');
-      peSymbol = buildMonthlyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, strike: peStrike, optType: 'PE' });
-      ceSymbol = buildMonthlyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, strike: ceStrike, optType: 'CE' });
+      peSymbol = buildMonthlyOptionSymbol({ exchange: 'NSE', underlying, year, month, strike: peStrike, optType: 'PE' });
+      ceSymbol = buildMonthlyOptionSymbol({ exchange: 'NSE', underlying, year, month, strike: ceStrike, optType: 'CE' });
     } else {
       // Weekly format
-      peSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, day, strike: peStrike, optType: 'PE' });
-      ceSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying: 'NIFTY', year, month, day, strike: ceStrike, optType: 'CE' });
+      peSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying, year, month, day, strike: peStrike, optType: 'PE' });
+      ceSymbol = buildWeeklyOptionSymbol({ exchange: 'NSE', underlying, year, month, day, strike: ceStrike, optType: 'CE' });
     }
 
     console.log('[analyze-weekly] Final symbols chosen:', { peSymbol, ceSymbol });
 
     // 3b) Resolve exact tradable symbols from chain near desired strikes
     try {
-      const effEpochNoon = Math.floor(Date.parse(eff + 'T06:30:00Z') / 1000); // ~12:00 IST; adjust if needed
-      const chainAtEff = await fyersService.getOptionChain({ symbol: 'NSE:NIFTY50-INDEX', timestamp: effEpochNoon, strikecount: 200 });
+  const effEpochNoon = Math.floor(Date.parse(eff + 'T06:30:00Z') / 1000); // ~12:00 IST; adjust if needed
+  const chainAtEff = await fyersService.getOptionChain({ symbol: indexSymbol, timestamp: effEpochNoon, strikecount: 200 });
       console.log('[analyze-weekly] Chain at effective expiry - data keys:', Object.keys(chainAtEff?.data || {}));
       const resolved = resolveSymbolsFromChain(chainAtEff?.data, peStrike, ceStrike);
       console.log('[analyze-weekly] Resolved symbols from chain:', resolved);

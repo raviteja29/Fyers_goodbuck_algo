@@ -2,7 +2,10 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { apiService } from '../services/api';
 import { LightweightCandlestickChart } from './LightweightCandlestickChart';
 
+
 export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boolean }) {
+  // Instrument quick select
+  const [instrument, setInstrument] = useState<'NIFTY' | 'BANKNIFTY' | 'FINNIFTY' | 'GIFTNIFTY'>('NIFTY');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [expiry, setExpiry] = useState('');
@@ -215,7 +218,8 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
     setLoading(true);
     setError(null);
     try {
-      const data = await apiService.analyzeWeekly({ from, to, expiry, resolution });
+      // Pass instrument to backend
+      const data = await apiService.analyzeWeekly({ instrument, from, to, expiry, resolution });
       setResult(data);
       setHasAnalyzed(true);
     } catch (e: any) {
@@ -223,7 +227,7 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, from, to, expiry, resolution]);
+  }, [isAuthenticated, instrument, from, to, expiry, resolution]);
 
   useEffect(() => {
     if (!hasAnalyzed) {
@@ -240,6 +244,21 @@ export function WeeklyOptionAnalyzer({ isAuthenticated }: { isAuthenticated: boo
   return (
     <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 border border-slate-600/50 rounded-lg p-4 space-y-4 shadow-xl backdrop-blur-sm">
       <h2 className="text-xl font-semibold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Weekly Option Analyzer</h2>
+
+      {/* Instrument Quick Select */}
+      <div className="mb-2 flex flex-wrap gap-2">
+        {['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'GIFTNIFTY'].map((inst) => (
+          <button
+            key={inst}
+            className={`px-3 py-1.5 rounded-lg font-semibold text-xs transition-all border-2
+              ${instrument === inst ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-500 shadow-md' : 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700'}`}
+            onClick={() => setInstrument(inst as any)}
+          >
+            {inst === 'GIFTNIFTY' ? 'GIFT NIFTY' : inst}
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div>
           <label className="block text-slate-300 text-sm mb-1.5 font-medium">From Date</label>

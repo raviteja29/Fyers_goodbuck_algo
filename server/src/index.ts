@@ -107,20 +107,14 @@ async function startServer() {
 
   // Routes - import after environment is loaded
   try {
-    console.log('Loading auth routes...');
-    const authModule = await import('./routes/auth.js');
-    console.log('Loading data routes...');
-    const dataModule = await import('./routes/data.js');
-    fyersAuthRouter = authModule.fyersAuthRouter;
-    fyersDataRouter = dataModule.fyersDataRouter;
-    console.log('Routes loaded successfully');
+    console.log('Loading Kite auth routes...');
+    const kiteModule = await import('./routes/kite.js');
+    app.use('/api/kite', kiteModule.default);
+    console.log('Kite routes loaded successfully');
   } catch (error) {
-    console.error('Failed to load routes:', error);
+    console.error('Failed to load Kite routes:', error);
     process.exit(1);
   }
-
-  app.use('/api/auth', fyersAuthRouter);
-  app.use('/api/data', fyersDataRouter);
 
   // Health check
   app.get('/health', (req: Request, res: Response) => {
