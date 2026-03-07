@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { FyersLogin } from './components/FyersLogin';
+import { KiteLogin } from './components/KiteLogin';
 import WeeklyOptionAnalyzer from './components/WeeklyOptionAnalyzer';
+import { KitePositionsHoldingsCard } from './components/KitePositionsHoldingsCard';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -9,10 +10,13 @@ function App() {
     <div className="min-h-screen bg-slate-950 px-4 py-4 space-y-4">
       <div className="max-w-[1920px] mx-auto">
         {/* Authentication Panel */}
-        <FyersLogin onAuthChange={setIsAuthenticated} />
+        <KiteLogin onAuthChange={setIsAuthenticated} />
 
         {/* Weekly Option Analyzer - Main Trading Interface */}
         <WeeklyOptionAnalyzer isAuthenticated={isAuthenticated} />
+
+        {/* Positions & Holdings Summary */}
+        {isAuthenticated && <KitePositionsHoldingsCard />}
 
         {/* Host mismatch helper */}
         {window.location.hostname === 'localhost' && (
@@ -25,4 +29,4 @@ function App() {
   );
 }
 
-export default App
+export default App;

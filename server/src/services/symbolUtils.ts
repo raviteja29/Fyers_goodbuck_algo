@@ -1,6 +1,4 @@
-// Symbol construction & validation utilities for Fyers
-// Based strictly on docs (Data API -> Appendix Symbology Format)
-// Supports: Index, Equity, Futures, Monthly Options, Weekly Options (NSE underlying focus)
+// Symbol utilities will be implemented for Kite API integration
 
 export type OptionType = 'CE' | 'PE';
 

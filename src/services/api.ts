@@ -6,7 +6,7 @@ export interface AuthStatus {
   authenticated: boolean;
   profile?: UserProfile;
   error?: string;
-} 
+}
 
 export interface NiftyRange {
   success: boolean;
@@ -23,7 +23,7 @@ export interface CalculatedStrikes {
 }
 
 class ApiService {
-  private async request<T>(path: string, options: RequestInit & { query?: Record<string, any> } = {}): Promise<T> {
+  public async customRequest<T>(path: string, options: RequestInit & { query?: Record<string, any> } = {}): Promise<T> {
     const { query, ...init } = options;
     let url = `${API_BASE_URL}${path}`;
     if (query) {
@@ -109,8 +109,18 @@ class ApiService {
   }
 
   // Analyze weekly options (range -> strikes -> effective expiry -> 30d series)
-  async analyzeWeekly(params: { from: string; to: string; expiry: string; resolution?: string }) {
+  async analyzeWeekly(params: { instrument?: string; from: string; to: string; expiry: string; resolution?: string }) {
     return this.request<any>(`/data/analyze-weekly`, { query: params });
+  }
+
+  // Get Kite positions
+  async getKitePositions() {
+    return this.customRequest<any>(`/kite/positions`);
+  }
+
+  // Get Kite holdings
+  async getKiteHoldings() {
+    return this.customRequest<any>(`/kite/holdings`);
   }
 }
 
