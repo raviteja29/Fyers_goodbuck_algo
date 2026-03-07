@@ -1,9 +1,64 @@
-// Data routes will be implemented for Kite API integration
-    // Use start-of-day for both from and to to get exact days only
-    // Accept instrument param (default NIFTY)
-    const instrument = req.body?.instrument || req.query?.instrument || 'NIFTY';
+import express, { Request, Response } from 'express';
+import { fyersService } from '../services/fyersService.js';
+import { requireAuth } from '../middleware/requireAuth.js';
+import { parseOptionSymbol, buildWeeklyOptionSymbol, buildMonthlyOptionSymbol, weekMonthCodeMap } from '../services/symbolUtils.js';
+
+export const fyersDataRouter = express.Router();
+
+// Authentication handled by shared middleware
+
+// Get NIFTY index data for a date range
+fyersDataRouter.get('/nifty-range', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { rangeFrom, rangeTo } = req.query;
+
+    if (!rangeFrom || !rangeTo) {
+      return res.status(400).json({ error: 'rangeFrom and rangeTo are required' });
+    }
+    // Convert to epoch seconds if needed (Fyers expects epoch when date_format=0)
+    const { fromEpoch, toEpoch } = normalizeDateRange(rangeFrom as string, rangeTo as string);
+    const data = await fyersService.getChartData({
+      symbol: 'NSE:NIFTY50-INDEX',
+      resolution: 'D',
+      rangeFrom: String(fromEpoch),
+      rangeTo: String(toEpoch),
+      dateFormat: '0'
+    });
+
+    // Calculate high and low
+    if (data.s === 'ok' && data.candles) {
+      const highs = data.candles.map((c: number[]) => c[2]);
+      const lows = data.candles.map((c: number[]) => c[3]);
+      const high = Math.max(...highs);
+      const low = Math.min(...lows);
+
+      res.json({
+        success: true,
+        high,
+        low,
+        rawData: data
+      });
+    } else {
+      console.warn('[nifty-range] No data returned', { rangeFrom, rangeTo, status: data.s, keys: Object.keys(data || {}) });
+      res.status(400).json({ error: 'No data available' });
+    }
+  } catch (error: any) {
+    console.error('[nifty-range] Error', { message: error.message, stack: error.stack });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Analyze weekly options: suggest effective expiry, build PE/CE, fetch 30-day series up to expiry
+// Query: from (YYYY-MM-DD), to (YYYY-MM-DD), expiry (YYYY-MM-DD), resolution (default 15)
+fyersDataRouter.get('/analyze-weekly', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { instrument = 'NIFTY', from, to, expiry, resolution = '15' } = req.query as Record<string, string>;
+    if (!from || !to || !expiry) {
+      return res.status(400).json({ error: 'from, to, and expiry are required (YYYY-MM-DD)' });
+    }
+
     // Map instrument to symbol and underlying
-    const instrumentMap = {
+    const instrumentMap: Record<string, { symbol: string, underlying: string }> = {
       NIFTY: { symbol: 'NSE:NIFTY50-INDEX', underlying: 'NIFTY' },
       BANKNIFTY: { symbol: 'NSE:NIFTYBANK-INDEX', underlying: 'BANKNIFTY' },
       FINNIFTY: { symbol: 'NSE:FINNIFTY-INDEX', underlying: 'FINNIFTY' },
@@ -11,6 +66,9 @@
       GIFTNIFTY: { symbol: 'NSE:GIFTNIFTY-INDEX', underlying: 'GIFTNIFTY' },
     };
     const { symbol: indexSymbol, underlying } = instrumentMap[instrument.toUpperCase()] || instrumentMap['NIFTY'];
+
+    // 1) Get NIFTY high/low on the user range (daily)
+    // Use start-of-day for both from and to to get exact days only
     const fromEpoch = Math.floor(Date.parse(from + 'T00:00:00Z') / 1000);
     const toEpoch = Math.floor(Date.parse(to + 'T00:00:00Z') / 1000);
     console.log(`[analyze-weekly] ${instrument} range query:`, { from, to, fromEpoch, toEpoch });
@@ -23,29 +81,29 @@
     });
     console.log(`[analyze-weekly] ${instrument} candles received:`, idx?.candles?.length, 'candles');
     if (!(idx?.candles?.length)) return res.status(400).json({ error: `No ${instrument} data in range` });
-    
+
     // Log the dates of candles received to debug range issues
     const candleDates = idx.candles.map((c: number[]) => new Date(c[0] * 1000).toISOString().split('T')[0]);
     console.log('[analyze-weekly] Candle dates:', candleDates);
-    
+
     const highs = idx.candles.map((c: number[]) => c[2]);
     const lows = idx.candles.map((c: number[]) => c[3]);
     const high = Math.max(...highs);
     const low = Math.min(...lows);
-    
+
     // Find which date had the high and low
     const highIdx = highs.indexOf(high);
     const lowIdx = lows.indexOf(low);
     console.log('[analyze-weekly] High:', high, 'on', candleDates[highIdx], '| Low:', low, 'on', candleDates[lowIdx]);
-    
+
     const peStrike = Math.ceil(high / 50) * 50;
     const ceStrike = Math.floor(low / 50) * 50;
 
     // 2) Option chain expiries to suggest effective expiry
-  const chain = await fyersService.getOptionChain({ symbol: indexSymbol });
-  console.log(`[analyze-weekly] Raw chain response keys:`, Object.keys(chain || {}));
-  console.log(`[analyze-weekly] Chain data keys:`, Object.keys(chain?.data || {}));
-    
+    const chain = await fyersService.getOptionChain({ symbol: indexSymbol });
+    console.log('[analyze-weekly] Raw chain response keys:', Object.keys(chain || {}));
+    console.log('[analyze-weekly] Chain data keys:', Object.keys(chain?.data || {}));
+
     // Extract expiries from the expiryData field
     let expiries: string[] = [];
     if (chain?.data?.expiryData) {
@@ -59,12 +117,12 @@
         expiries = chain.data.expiryData.expiryList;
       }
     }
-    
+
     // Fallback to other possible fields
     if (!expiries.length) {
       expiries = chain?.data?.expiries || chain?.data?.expiry || chain?.data?.expiryList || [];
     }
-    
+
     console.log('[analyze-weekly] Requested expiry:', expiry);
     console.log('[analyze-weekly] Available expiries from chain:', expiries);
     const eff = suggestExpiry(expiry, expiries);
@@ -90,6 +148,7 @@
 
     let peSymbol: string;
     let ceSymbol: string;
+
     // If the effective expiry falls on the last Tuesday of the month, treat it as a monthly expiry
     if (isLastTuesday(effDate)) {
       console.log('[analyze-weekly] Effective expiry is last Tuesday of month -> using monthly option symbol format');
@@ -105,8 +164,8 @@
 
     // 3b) Resolve exact tradable symbols from chain near desired strikes
     try {
-  const effEpochNoon = Math.floor(Date.parse(eff + 'T06:30:00Z') / 1000); // ~12:00 IST; adjust if needed
-  const chainAtEff = await fyersService.getOptionChain({ symbol: indexSymbol, timestamp: effEpochNoon, strikecount: 200 });
+      const effEpochNoon = Math.floor(Date.parse(eff + 'T06:30:00Z') / 1000); // ~12:00 IST; adjust if needed
+      const chainAtEff = await fyersService.getOptionChain({ symbol: indexSymbol, timestamp: effEpochNoon, strikecount: 200 });
       console.log('[analyze-weekly] Chain at effective expiry - data keys:', Object.keys(chainAtEff?.data || {}));
       const resolved = resolveSymbolsFromChain(chainAtEff?.data, peStrike, ceStrike);
       console.log('[analyze-weekly] Resolved symbols from chain:', resolved);
@@ -126,9 +185,9 @@
     // 4) 90-day window up to expiry (Fyers API limit is 100 days, using 90 for safety)
     const windowStart = new Date(effDate);
     windowStart.setDate(windowStart.getDate() - 90);
-    const rangeFrom = windowStart.toISOString().slice(0,10);
+    const rangeFrom = windowStart.toISOString().slice(0, 10);
     const rangeTo = eff;
-    
+
     // Calculate the number of days in the window
     const daysDiff = Math.ceil((effDate.getTime() - windowStart.getTime()) / (1000 * 60 * 60 * 24));
     console.log('[analyze-weekly] Data window:', { rangeFrom, rangeTo, days: daysDiff });
@@ -136,10 +195,10 @@
     // 4b) Fetch data with multiple retry strategies
     const fetchWithRetry = async (sym: string, type: 'PE' | 'CE') => {
       console.log(`[analyze-weekly] Attempting to fetch ${type} data for symbol:`, sym);
-      
+
       const trySymbolVariations = async (baseSymbol: string) => {
         const variations: string[] = [baseSymbol]; // Original first
-        
+
         // Only try NIFTY50 variation if current symbol uses NIFTY (and doesn't already have NIFTY50)
         if (baseSymbol.includes('NIFTY') && !baseSymbol.includes('NIFTY50')) {
           variations.push(baseSymbol.replace('NIFTY', 'NIFTY50'));
@@ -148,7 +207,7 @@
         if (baseSymbol.includes('NIFTY50')) {
           variations.push(baseSymbol.replace('NIFTY50', 'NIFTY'));
         }
-        
+
         // Try with single digit day if current has leading zero (for weekly options)
         if (/([OND1-9])0(\d)/.test(baseSymbol)) {
           const altDay = baseSymbol.replace(/([OND1-9])0(\d)(\d+)(CE|PE)$/, '$1$2$3$4');
@@ -156,16 +215,16 @@
             variations.push(altDay);
           }
         }
-        
+
         for (const variation of variations) {
           try {
             console.log(`[analyze-weekly] Trying ${type} variation:`, variation);
-            const result = await fyersService.getChartData({ 
-              symbol: variation, 
-              resolution: String(resolution), 
-              rangeFrom, 
-              rangeTo, 
-              dateFormat: '1' 
+            const result = await fyersService.getChartData({
+              symbol: variation,
+              resolution: String(resolution),
+              rangeFrom,
+              rangeTo,
+              dateFormat: '1'
             });
             console.log(`[analyze-weekly] Success with ${type} symbol:`, variation);
             return result;
@@ -175,7 +234,7 @@
         }
         throw new Error(`All symbol variations failed for ${type}: ${variations.join(', ')}`);
       };
-      
+
       return await trySymbolVariations(sym);
     };
 
@@ -193,15 +252,15 @@
       return Math.floor(base.getTime() / 1000);
     };
 
-  const optionFromEpoch = parseIstEpoch(from);
-  const optionToEpoch = parseIstEpoch(to, true);
+    const optionFromEpoch = parseIstEpoch(from);
+    const optionToEpoch = parseIstEpoch(to, true);
 
     const computeRangeStats = (series: any) => {
       const candles: number[][] = series?.candles ?? [];
       if (!Array.isArray(candles) || candles.length === 0) {
         return { high: null, low: null };
       }
-  const filtered = candles.filter((c: number[]) => c[0] >= optionFromEpoch && c[0] <= optionToEpoch);
+      const filtered = candles.filter((c: number[]) => c[0] >= optionFromEpoch && c[0] <= optionToEpoch);
       if (!filtered.length) {
         return { high: null, low: null };
       }
@@ -239,8 +298,8 @@ fyersDataRouter.get('/option-chart', requireAuth, async (req: Request, res: Resp
     const { symbol, resolution, rangeFrom, rangeTo } = req.query;
 
     if (!symbol || !resolution || !rangeFrom || !rangeTo) {
-      return res.status(400).json({ 
-        error: 'symbol, resolution, rangeFrom, and rangeTo are required' 
+      return res.status(400).json({
+        error: 'symbol, resolution, rangeFrom, and rangeTo are required'
       });
     }
 
@@ -364,7 +423,7 @@ function getExpiryCode(date: Date = new Date()): string {
   d.setUTCDate(d.getUTCDate() + add);
   const month = d.getUTCMonth() + 1;
   const monthCode = (weekMonthCodeMap as any)[month]; // 1..9,O,N,D per Fyers weekly mapping
-  const day = String(d.getUTCDate()).padStart(2,'0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
   return monthCode + day;
 }
 
@@ -394,7 +453,7 @@ function parseExpiryString(s: string): string | null {
     const dd = m[1];
     const mon = m[2].toUpperCase();
     const yyyy = m[3];
-    const map: Record<string, string> = { JAN:'01', FEB:'02', MAR:'03', APR:'04', MAY:'05', JUN:'06', JUL:'07', AUG:'08', SEP:'09', OCT:'10', NOV:'11', DEC:'12' };
+    const map: Record<string, string> = { JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06', JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12' };
     const mm = map[mon];
     if (!mm) return null;
     return `${yyyy}-${mm}-${dd}`;
@@ -414,7 +473,7 @@ function suggestExpiry(requested: string, expiries: string[]): string {
     if (!norm.length) return requested;
     const times = norm.map(x => ({ raw: x.raw, iso: x.iso, t: Date.parse(x.iso + 'T00:00:00Z') }));
     // First try on/after requested
-    const future = times.filter(x => x.t >= req).sort((a,b) => a.t - b.t);
+    const future = times.filter(x => x.t >= req).sort((a, b) => a.t - b.t);
     if (future.length) return future[0].iso;
     // Else pick closest overall by abs delta; tie -> earlier
     let best = times[0];
