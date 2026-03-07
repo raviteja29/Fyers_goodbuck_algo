@@ -6,7 +6,7 @@ export interface AuthStatus {
   authenticated: boolean;
   profile?: UserProfile;
   error?: string;
-} 
+}
 
 export interface NiftyRange {
   success: boolean;
@@ -51,7 +51,7 @@ class ApiService {
         const message = body?.error || body?.message || `Request failed (${res.status})`;
         throw new Error(message);
       }
-  return body as T;
+      return body as T;
     } catch (err: any) {
       // Re-throw with normalized message
       throw new Error(err?.message || 'Network request failed');

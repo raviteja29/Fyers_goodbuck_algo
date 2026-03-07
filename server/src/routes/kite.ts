@@ -1,26 +1,4 @@
-// Get live positions
-router.get("/positions", async (req, res) => {
-  try {
-    const kite = require("../services/kiteService.js");
-    const instance = kite.getKiteInstance();
-    const positions = await instance.getPositions();
-    res.json(positions);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
-// Get live holdings
-router.get("/holdings", async (req, res) => {
-  try {
-    const kite = require("../services/kiteService.js");
-    const instance = kite.getKiteInstance();
-    const holdings = await instance.getHoldings();
-    res.json(holdings);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
 import express from "express";
 import { getLoginUrl, generateSession, getAccessToken, logout, getKiteInstance } from "../services/kiteService.js";
 
@@ -62,7 +40,7 @@ router.get("/callback", async (req, res) => {
   }
   try {
     const session = await generateSession(request_token as string);
-  req.session.accessToken = session.access_token;
+    req.session.accessToken = session.access_token;
     res.redirect("/?auth=success");
   } catch (err: any) {
     res.redirect("/?auth=failed&error=" + encodeURIComponent(err.message));
