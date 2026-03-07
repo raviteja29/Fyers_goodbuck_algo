@@ -30,7 +30,7 @@ export const KiteLogin: React.FC<KiteLoginProps> = ({ onAuthChange }) => {
   const checkAuthStatus = async () => {
     setLoading(true);
     try {
-  const status = await apiService.customRequest<{ authenticated: boolean }>(`/kite/status`);
+      const status = await apiService.request<{ authenticated: boolean }>(`/kite/status`);
       setIsAuthenticated(status.authenticated);
       setError(null);
       if (onAuthChange) onAuthChange(status.authenticated);
@@ -47,7 +47,7 @@ export const KiteLogin: React.FC<KiteLoginProps> = ({ onAuthChange }) => {
     setError(null);
     setLoading(true);
     try {
-  const { url } = await apiService.customRequest<{ url: string }>(`/kite/url`);
+      const { url } = await apiService.request<{ url: string }>(`/kite/url`);
       window.location.href = url;
     } catch (err: any) {
       setError(err.message);
@@ -59,7 +59,7 @@ export const KiteLogin: React.FC<KiteLoginProps> = ({ onAuthChange }) => {
     setError(null);
     setLoading(true);
     try {
-  await apiService.customRequest(`/kite/logout`, { method: 'POST' });
+      await apiService.request(`/kite/logout`, { method: 'POST' });
       setIsAuthenticated(false);
       if (onAuthChange) onAuthChange(false);
     } catch (err: any) {

@@ -23,7 +23,7 @@ export interface CalculatedStrikes {
 }
 
 class ApiService {
-  public async customRequest<T>(path: string, options: RequestInit & { query?: Record<string, any> } = {}): Promise<T> {
+  public async request<T>(path: string, options: RequestInit & { query?: Record<string, any> } = {}): Promise<T> {
     const { query, ...init } = options;
     let url = `${API_BASE_URL}${path}`;
     if (query) {
@@ -115,12 +115,12 @@ class ApiService {
 
   // Get Kite positions
   async getKitePositions() {
-    return this.customRequest<any>(`/kite/positions`);
+    return this.request<any>(`/kite/positions`);
   }
 
   // Get Kite holdings
   async getKiteHoldings() {
-    return this.customRequest<any>(`/kite/holdings`);
+    return this.request<any>(`/kite/holdings`);
   }
 }
 
